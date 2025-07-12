@@ -1,0 +1,13 @@
+BasedOnStyle: Google
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+PointerAlignment: Right
+ColumnLimit: 80 # I often view side by side
+BreakBeforeBraces: Allman
+BinPackParameters: false
+BinPackArguments: false
+AllowAllParametersOfDeclarationOnNextLine: false
+AlignAfterOpenBracket: Align
+SortIncludes: true
+ReflowComments: true

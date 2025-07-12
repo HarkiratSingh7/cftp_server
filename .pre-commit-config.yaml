@@ -1,0 +1,9 @@
+repos:
+  - repo: local
+    hooks:
+      - id: clang-format-local
+        name: clang-format (local)
+        entry: clang-format -i
+        language: system
+        files: .*\.(c|h)$
+        types: [file]
