@@ -29,11 +29,6 @@ static int register_command(const char *command,
                             connection_t *connection);
 inline static void parse_text_command(const char *input,
                                       cftp_command_t *cmd_out);
-// inline static void parse_text_command(const char *input,
-//                                       char *command_out,
-//                                       size_t cmd_size,
-//                                       char *params_out,
-//                                       size_t param_size);
 
 void execute_root_command(const char *input, struct bufferevent *bev)
 {

@@ -11,6 +11,7 @@
 #include <unistd.h>
 
 #include "auth.h"
+#include "connection.h"
 #include "control_handler.h"
 #include "data_handler.h"
 #include "error.h"
@@ -30,8 +31,6 @@ extern void handle_LIST_command(connection_t *connection,
                                 const char *params,
                                 int description,
                                 int hidden);
-
-static void disable_connection_cb(struct bufferevent *bev, void *ctx);
 
 static void handle_mdtm_command(connection_t *connection, const char *arg);
 static void handle_cwd_command(connection_t *connection, const char *params);
@@ -90,16 +89,11 @@ static void handle_mdtm_command(connection_t *connection, const char *arg)
     send_control_message(connection, FTP_STATUS_FILE_STATUS, buf);
 }
 
-static void disable_connection_cb(struct bufferevent *bev, void *ctx)
-{
-    INFO("Disabling connection !");
-    bufferevent_disable(bev, EV_READ | EV_WRITE);
-}
-
 /* NULL Checks must be covered by caller */
 
 void cftp_syst_action(cftp_command_t *cmd, connection_t *connection)
 {
+    DEBG("Invoking for %s", cmd->command);
     send_control_message(connection,
                          FTP_STATUS_NAME_SYSTEM_TYPE,
                          "UNIX Type: L8"); /* Don't know but still :
@@ -109,6 +103,7 @@ void cftp_syst_action(cftp_command_t *cmd, connection_t *connection)
 
 void cftp_quit_action(cftp_command_t *cmd, connection_t *connection)
 {
+    DEBG("Invoking for %s", cmd->command);
     /* TODO: ADD TO A TIMER Instead of freeing now ! Also disable read write
      * from here only*/
     connection->control_write_cb = disable_connection_cb;
@@ -133,6 +128,7 @@ void cftp_auth_action(cftp_command_t *cmd, connection_t *connection)
 
 void cftp_pbsz_action(cftp_command_t *cmd, connection_t *connection)
 {
+    DEBG("Invoking for %s", cmd->command);
     send_control_message(connection, FTP_STATUS_COMMAND_OK, "PBSZ=0");
 }
 
@@ -159,12 +155,14 @@ void cftp_prot_action(cftp_command_t *cmd, connection_t *connection)
 
 void cftp_noop_action(cftp_command_t *cmd, connection_t *connection)
 {
+    DEBG("Invoking for %s", cmd->command);
     send_control_message(
         connection, FTP_STATUS_COMMAND_OK, "NOOP command successful");
 }
 
 void cftp_feat_action(cftp_command_t *cmd, connection_t *connection)
 {
+    DEBG("Invoking for %s", cmd->command);
     const char *features =
         "211-Features:\r\n"
         " EPSV\r\n"
@@ -179,13 +177,31 @@ void cftp_feat_action(cftp_command_t *cmd, connection_t *connection)
 
 void cftp_invalid_action(cftp_command_t *cmd, connection_t *connection)
 {
-    ERROR("This command is unknown: %s", cmd->command);
+    char arguments[MAX_COMMAND_LENGTH] = {0};
+    size_t len = 0;
+
+    for (int i = 0; i < cmd->argc; i++)
+    {
+        int remaining = sizeof(arguments) - len;
+
+        int written = snprintf(arguments + len,
+                               remaining,
+                               (i == cmd->argc - 1) ? "%s" : "%s ",
+                               cmd->args[i]);
+
+        if (written < 0 || written >= remaining) break;
+
+        len += written;
+    }
+
+    ERROR("This command is unknown: %s %s", cmd->command, arguments);
     send_control_message(
         connection, FTP_STATUS_COMMAND_NOT_IMPLEMENTED_PERM, "Unknown command");
 }
 
 void cftp_non_authenticated(cftp_command_t *cmd, connection_t *connection)
 {
+    DEBG("Invoking for %s", cmd->command);
     send_control_message(connection, FTP_STATUS_NOT_LOGGED_IN, "Not logged in");
 }
 
@@ -218,12 +234,14 @@ void cftp_type_authenticated_action(cftp_command_t *cmd,
 void cftp_epsv_authenticated_action(cftp_command_t *cmd,
                                     connection_t *connection)
 {
+    DEBG("Invoking for %s", cmd->command);
     data_connection_listener_config(connection, 1);
 }
 
 void cftp_pasv_authenticated_action(cftp_command_t *cmd,
                                     connection_t *connection)
 {
+    DEBG("Invoking for %s", cmd->command);
     data_connection_listener_config(connection, 0);
 }
 
@@ -337,6 +355,7 @@ void cftp_cwd_authenticated_action(cftp_command_t *cmd,
 void cftp_pwd_authenticated_action(cftp_command_t *cmd,
                                    connection_t *connection)
 {
+    DEBG("Invoking for %s", cmd->command);
     char cwd[PATH_MAX];
     IF(getcwd(cwd, sizeof(cwd)) != NULL)
     {
@@ -353,6 +372,7 @@ void cftp_pwd_authenticated_action(cftp_command_t *cmd,
 void cftp_abor_authenticated_action(cftp_command_t *cmd,
                                     connection_t *connection)
 {
+    DEBG("Invoking for %s", cmd->command);
     IF(connection->data_active)
     {
         close_data_connection(connection);
@@ -371,6 +391,7 @@ void cftp_abor_authenticated_action(cftp_command_t *cmd,
 
 void cftp_authenticated(cftp_command_t *cmd, connection_t *connection)
 {
+    DEBG("Invoking for %s", cmd->command);
     send_control_message(
         connection, FTP_STATUS_USER_LOGGED_IN, "Already logged in");
 }
@@ -410,6 +431,8 @@ void cftp_pass_authenticated(cftp_command_t *cmd, connection_t *connection)
         send_control_message(
             connection, FTP_STATUS_USER_LOGGED_IN, "User logged in");
         connection->authenticated = 1;
+        evtimer_del(connection->timeout_event);
+        event_free(connection->timeout_event);
     }
     ELSE
     {

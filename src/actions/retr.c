@@ -134,6 +134,8 @@ static void download_completion_on_plain_connection_cb(struct bufferevent *bev,
 
 static void close_on_retrcb(struct bufferevent *bev, void *ctx)
 {
+    if (!bev) return;
+
     DEBG("Sent File OK");
     connection_t *connection = (connection_t *)ctx;
     connection->control_write_cb = close_data_connection_on_writecb;

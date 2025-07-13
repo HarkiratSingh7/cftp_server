@@ -22,5 +22,6 @@ void ask_root_for_groupname(connection_t *connection,
                             uint32_t gid,
                             char *buffer,
                             size_t buffer_size);
+void on_parent_dead(evutil_socket_t fd, short events, void *ctx);
 
 #endif

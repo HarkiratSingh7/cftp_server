@@ -58,7 +58,7 @@ void cftp_recv_file_with_evbuffer(connection_t *connection,
 static void tls_on_bev_event_connected(struct bufferevent *bev, void *ctx)
 {
     connection_t *connection = (connection_t *)ctx;
-    if (!connection)
+    if (!connection || !bev)
     {
         ERROR("Invalid connection object !");
         return;
@@ -87,7 +87,7 @@ static void on_eof_event_cb(struct bufferevent *bev, void *ctx)
 {
     connection_t *connection = (connection_t *)ctx;
 
-    if (!connection || !connection->data_bev)
+    if (!connection || !connection->data_bev || !bev)
     {
         ERROR("Invalid connection object !");
         return;

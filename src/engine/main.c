@@ -51,8 +51,6 @@ int main()
                           control_connection_accept_cb);
     event_base_dispatch(g_server_state.base);
 
-    event_base_free(g_server_state.base);
-    SSL_CTX_free(g_server_state.ssl_ctx);
-
+    destroy_server_state();
     return 0;
 }

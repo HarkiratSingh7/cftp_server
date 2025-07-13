@@ -86,7 +86,7 @@ __attribute__((format(printf, 5, 6))) void print_log(
     char time_buf[32];
     strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S", &tm_info);
 
-    char *message1 = calloc(1, LOGGER_HALF_BUFFER * 2 + NORMAL_LEN);
+    char message1[LOGGER_HALF_BUFFER * 2 + NORMAL_LEN];
     int res1 = 0, res2 = 0;
 
     memset(message1, 0, LOGGER_HALF_BUFFER * 2 + NORMAL_LEN);

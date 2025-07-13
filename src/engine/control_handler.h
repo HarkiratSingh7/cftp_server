@@ -15,7 +15,8 @@
  * @param connection Expects a connection object here.
  */
 void start_control_connection_loop(evutil_socket_t fd,
-                                   connection_t *connection);
+                                   connection_t *connection,
+                                   int pipe);
 
 /*!
  * @brief Control function to upgrade to TLS channel on demand.
@@ -41,5 +42,5 @@ void write_text_response(struct bufferevent *bev, const char *text);
 void send_control_message(connection_t *connection,
                           uint32_t status_code,
                           const char *text);
-
+void terminate_process_on_timeout(evutil_socket_t fd, short what, void *arg);
 #endif

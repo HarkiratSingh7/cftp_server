@@ -8,6 +8,9 @@
 #include "control_handler.h"
 #include "error.h"
 #include "ftp_status_codes.h"
+#include "server_state.h"
+
+extern server_state_t g_server_state;
 
 /*!
  * @brief Write callback for data connection
@@ -17,17 +20,20 @@ static void data_connection_read_cb(struct bufferevent *bev, void *ctx);
 static void data_connection_event_cb(struct bufferevent *bev,
                                      short events,
                                      void *ctx);
+static void kill_listener_on_timeout(evutil_socket_t fd, short what, void *arg);
 
 void data_connection_accept_cb(struct evconnlistener *listener,
                                evutil_socket_t fd,
                                struct sockaddr *addr,
-                               int unused,
+                               int unused __attribute__((unused)),
                                void *ctx)
 {
     /* First of all the source incoming IP must be same ! */
     connection_t *connection = (connection_t *)ctx;
     char ip_str[INET6_ADDRSTRLEN];
     fill_source_ip(addr, ip_str);
+
+    DEBG("unused %d", unused);
 
     if (strncmp(connection->source_ip, ip_str, sizeof(INET6_ADDRSTRLEN)) != 0)
     {
@@ -84,6 +90,9 @@ void data_connection_accept_cb(struct evconnlistener *listener,
     if (!connection->data_tls_required)
         __sync_add_and_fetch_8(&connection->data_active, 1);
 
+    evtimer_del(connection->timeout_event);
+    event_free(connection->timeout_event);
+
     DEBG("Data connection established on fd %d", fd);
 }
 
@@ -132,6 +141,12 @@ void data_connection_listener_config(connection_t *connection, int extended)
                                  "Can't open passive connection");
             return;
         }
+
+        /* Start a timer */
+        struct timeval timeout = {g_server_state.data_connection_timeout, 0};
+        connection->timeout_event =
+            evtimer_new(connection->base, kill_listener_on_timeout, connection);
+        evtimer_add(connection->timeout_event, &timeout);
 
         char response[256];
 
@@ -331,4 +346,21 @@ void close_data_connection(connection_t *connection)
     }
 
     DEBG("Data connection closed for %s", connection->username);
+}
+
+static void kill_listener_on_timeout(evutil_socket_t fd __attribute__((unused)),
+                                     short what __attribute__((unused)),
+                                     void *arg)
+{
+    connection_t *connection = (connection_t *)arg;
+    if (connection->pasv_listener)
+    {
+        evconnlistener_disable(connection->pasv_listener);
+        evconnlistener_free(connection->pasv_listener);
+        connection->pasv_listener = NULL;
+        ERROR(
+            "Timed out for data connection, disabling the data connection "
+            "listener for %s!",
+            connection->username);
+    }
 }
