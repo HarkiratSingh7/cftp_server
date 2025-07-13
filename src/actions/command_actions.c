@@ -21,39 +21,36 @@
 extern void cftp_send_file(connection_t *connection, const char *params);
 extern void cftp_recv_file_with_evbuffer(connection_t *connection,
                                          const char *filepath);
+extern void handle_dele_command(cftp_command_t *command,
+                                connection_t *connection);
+extern void handle_list_command(cftp_command_t *command,
+                                connection_t *connection,
+                                int description);
 extern void handle_LIST_command(connection_t *connection,
                                 const char *params,
                                 int description,
                                 int hidden);
 
-static void close_connection_cb(struct bufferevent *bev, void *ctx);
+static void disable_connection_cb(struct bufferevent *bev, void *ctx);
 
-static void handle_mdtm_command(connection_t *conn, const char *arg);
-static void handle_cwd_command(connection_t *conn, const char *params);
+static void handle_mdtm_command(connection_t *connection, const char *arg);
+static void handle_cwd_command(connection_t *connection, const char *params);
 
-static void handle_cwd_command(connection_t *conn, const char *params)
+static void handle_cwd_command(connection_t *connection, const char *params)
 {
     char target_path[PATH_MAX];
     struct stat st;
 
     if (!params || strlen(params) == 0)
     {
-        write_text_response(conn->bev, "550 Missing path.\r\n");
+        write_text_response(connection->bev, "550 Missing path.\r\n");
         return;
     }
 
-    if (params && strlen(params) > 0)
+    if (!is_path_safe(params))
     {
-        /*  Prevent traversal outside the chroot */
-        if (strstr(params, "..") != NULL)
-        {
-            write_text_response(conn->bev, "550 Invalid path\r\n");
-            return;
-        }
-    }
-    if (!validate_params(params, conn->error_buf))
-    {
-        write_text_response(conn->bev, conn->error_buf);
+        send_control_message(
+            connection, FTP_STATUS_FILE_ACTION_NOT_TAKEN_PERM, "Invalid path");
         return;
     }
 
@@ -61,94 +58,96 @@ static void handle_cwd_command(connection_t *conn, const char *params)
 
     if (stat(target_path, &st) < 0 || !S_ISDIR(st.st_mode))
     {
-        write_text_response(conn->bev, "550 Not a directory.\r\n");
+        write_text_response(connection->bev, "550 Not a directory.\r\n");
         return;
     }
 
     if (chdir(target_path) < 0)
     {
-        write_text_response(conn->bev, "550 Failed to change directory.\r\n");
+        write_text_response(connection->bev,
+                            "550 Failed to change directory.\r\n");
         return;
     }
 
-    write_text_response(conn->bev, "250 Directory successfully changed.\r\n");
+    write_text_response(connection->bev,
+                        "250 Directory successfully changed.\r\n");
 }
 
-static void handle_mdtm_command(connection_t *conn, const char *arg)
+static void handle_mdtm_command(connection_t *connection, const char *arg)
 {
     struct stat st;
     if (stat(arg, &st) != 0 || S_ISDIR(st.st_mode))
     {
-        write_text_response(conn->bev,
-                            "550 Could not get modification time.\r\n");
+        send_control_message(connection,
+                             FTP_STATUS_FILE_ACTION_NOT_TAKEN_PERM,
+                             "Failed to get modification time");
         return;
     }
 
     struct tm *gmt = gmtime(&st.st_mtime);
     char buf[64];
     strftime(buf, sizeof(buf), "%Y%m%d%H%M%S", gmt);
-    snprintf(buf, sizeof(buf), "213 %s\r\n", buf);
-    INFO("Sending %s", buf);
-    write_text_response(conn->bev, buf);
+    send_control_message(connection, FTP_STATUS_FILE_STATUS, buf);
 }
 
-static void close_connection_cb(struct bufferevent *bev, void *ctx)
+static void disable_connection_cb(struct bufferevent *bev, void *ctx)
 {
-    connection_t *connection = (connection_t *)ctx;
-
-    if (!connection) return;
-
     INFO("Disabling connection !");
     bufferevent_disable(bev, EV_READ | EV_WRITE);
-    // bufferevent_free(bev);
 }
 
 /* NULL Checks must be covered by caller */
 
-void cftp_syst_action(const char *input,
-                      const char *params,
-                      connection_t *connection)
+void cftp_syst_action(cftp_command_t *cmd, connection_t *connection)
 {
     send_control_message(connection,
                          FTP_STATUS_NAME_SYSTEM_TYPE,
                          "UNIX Type: L8"); /* Don't know but still :
                                              https://cr.yp.to/ftp/syst.html */
+    /* TODO: Refine it */
 }
 
-void cftp_quit_action(const char *input,
-                      const char *params,
-                      connection_t *connection)
+void cftp_quit_action(cftp_command_t *cmd, connection_t *connection)
 {
-    /* ADD TO A TIMER Instead of freeing now ! Also disable read write from here
-     * only*/
-    connection->control_write_cb = close_connection_cb;
+    /* TODO: ADD TO A TIMER Instead of freeing now ! Also disable read write
+     * from here only*/
+    connection->control_write_cb = disable_connection_cb;
     send_control_message(connection, FTP_STATUS_SERVICE_CLOSING, "Goodbye");
 }
 
-void cftp_auth_action(const char *input,
-                      const char *params,
-                      connection_t *connection)
+void cftp_auth_action(cftp_command_t *cmd, connection_t *connection)
 {
-    IF_MATCHES(params, "TLS")
+    IF(cmd->argc != 1)
+    {
+        send_control_message(connection,
+                             FTP_STATUS_SYNTAX_ERROR_PARAMS,
+                             "File path not provided");
+        return;
+    }
+
+    IF_MATCHES(cmd->args[0], "TLS")
     upgrade_to_tls(connection);
     ELSE send_control_message(
         connection, FTP_STATUS_SYNTAX_ERROR_PARAMS, "Invalid parameter");
 }
 
-void cftp_pbsz_action(const char *input,
-                      const char *params,
-                      connection_t *connection)
+void cftp_pbsz_action(cftp_command_t *cmd, connection_t *connection)
 {
     send_control_message(connection, FTP_STATUS_COMMAND_OK, "PBSZ=0");
 }
 
-void cftp_prot_action(const char *input,
-                      const char *params,
-                      connection_t *connection)
+void cftp_prot_action(cftp_command_t *cmd, connection_t *connection)
 {
-    IF_MATCHES(params, "P")
+    IF(cmd->argc != 1)
     {
-        INFO("Data connection TLS required !");
+        send_control_message(connection,
+                             FTP_STATUS_SYNTAX_ERROR_PARAMS,
+                             "File path not provided");
+        return;
+    }
+    IF_MATCHES(cmd->args[0], "P")
+    {
+        DEBG("Data connection TLS required !");
         connection->data_tls_required = 1;
         send_control_message(
             connection, FTP_STATUS_COMMAND_OK, "PROT now Private");
@@ -158,17 +157,13 @@ void cftp_prot_action(const char *input,
                               "Unsupported PROT level");
 }
 
-void cftp_noop_action(const char *input,
-                      const char *params,
-                      connection_t *connection)
+void cftp_noop_action(cftp_command_t *cmd, connection_t *connection)
 {
     send_control_message(
         connection, FTP_STATUS_COMMAND_OK, "NOOP command successful");
 }
 
-void cftp_feat_action(const char *input,
-                      const char *params,
-                      connection_t *connection)
+void cftp_feat_action(cftp_command_t *cmd, connection_t *connection)
 {
     const char *features =
         "211-Features:\r\n"
@@ -182,32 +177,35 @@ void cftp_feat_action(const char *input,
     send_control_message(connection, 0, features);
 }
 
-void cftp_invalid_action(const char *input,
-                         const char *params,
-                         connection_t *connection)
+void cftp_invalid_action(cftp_command_t *cmd, connection_t *connection)
 {
+    ERROR("This command is unknown: %s", cmd->command);
     send_control_message(
         connection, FTP_STATUS_COMMAND_NOT_IMPLEMENTED_PERM, "Unknown command");
 }
 
-void cftp_non_authenticated(const char *input,
-                            const char *params,
-                            connection_t *connection)
+void cftp_non_authenticated(cftp_command_t *cmd, connection_t *connection)
 {
     send_control_message(connection, FTP_STATUS_NOT_LOGGED_IN, "Not logged in");
 }
 
-void cftp_type_authenticated_action(const char *input,
-                                    const char *params,
+void cftp_type_authenticated_action(cftp_command_t *cmd,
                                     connection_t *connection)
 {
-    IF_MATCHES(params, "I")
+    IF(cmd->argc != 1)
+    {
+        send_control_message(connection,
+                             FTP_STATUS_SYNTAX_ERROR_PARAMS,
+                             "File path not provided");
+        return;
+    }
+    IF_MATCHES(cmd->args[0], "I")
     {
         connection->transfer_mode = TRANSFER_MODE_BINARY;
         send_control_message(
             connection, FTP_STATUS_COMMAND_OK, "Type set to I");
     }
-    ELSE IF_MATCHES(params, "A")
+    ELSE IF_MATCHES(cmd->args[0], "A")
     {
         connection->transfer_mode = TRANSFER_MODE_ASCII;
         send_control_message(
@@ -217,105 +215,132 @@ void cftp_type_authenticated_action(const char *input,
         connection, FTP_STATUS_UNSUPPORTED_TYPE, "Unsupported type");
 }
 
-void cftp_epsv_authenticated_action(const char *input,
-                                    const char *params,
+void cftp_epsv_authenticated_action(cftp_command_t *cmd,
                                     connection_t *connection)
 {
     data_connection_listener_config(connection, 1);
 }
 
-void cftp_pasv_authenticated_action(const char *input,
-                                    const char *params,
+void cftp_pasv_authenticated_action(cftp_command_t *cmd,
                                     connection_t *connection)
 {
     data_connection_listener_config(connection, 0);
 }
 
-void cftp_nlst_authenticated_action(const char *input,
-                                    const char *params,
+void cftp_nlst_authenticated_action(cftp_command_t *cmd,
                                     connection_t *connection)
 {
-    handle_LIST_command(connection, params, 0, 1);
+    handle_list_command(cmd, connection, 0);
 }
 
-void cftp_list_authenticated_action(const char *input,
-                                    const char *params,
+void cftp_list_authenticated_action(cftp_command_t *cmd,
                                     connection_t *connection)
 {
-    handle_LIST_command(connection, params, 1, 1);
+    handle_list_command(cmd, connection, 1);
 }
 
-void cftp_size_authenticated_action(const char *input,
-                                    const char *params,
+void cftp_size_authenticated_action(cftp_command_t *cmd,
                                     connection_t *connection)
 {
-    IF(strnlen(params, MAX_COMMAND_LENGTH) != 0)
+    IF(cmd->argc != 1)
     {
-        struct stat st;
-        if (stat(params, &st) < 0 || S_ISDIR(st.st_mode))
-        {
-            send_control_message(connection,
-                                 FTP_STATUS_FILE_ACTION_NOT_TAKEN_PERM,
-                                 "File not found");
-            return;
-        }
-
-        char response[MAX_COMMAND_LENGTH];
-        snprintf(response, sizeof(response), "%" PRIu64, st.st_size);
-        send_control_message(connection, FTP_STATUS_FILE_STATUS, response);
+        send_control_message(connection,
+                             FTP_STATUS_SYNTAX_ERROR_PARAMS,
+                             "File path not provided");
+        return;
     }
-    ELSE send_control_message(
-        connection, FTP_STATUS_SYNTAX_ERROR_PARAMS, "File name not specified");
+
+    IF(!is_path_safe(cmd->args[0]))
+    {
+        send_control_message(
+            connection, FTP_STATUS_FILE_ACTION_NOT_TAKEN_PERM, "Invalid path");
+        return;
+    }
+
+    struct stat st;
+    if (stat(cmd->args[0], &st) < 0 || S_ISDIR(st.st_mode))
+    {
+        send_control_message(connection,
+                             FTP_STATUS_FILE_ACTION_NOT_TAKEN_PERM,
+                             "File not found");
+        return;
+    }
+
+    char response[MAX_COMMAND_LENGTH];
+    snprintf(response, sizeof(response), "%" PRIu64, st.st_size);
+    send_control_message(connection, FTP_STATUS_FILE_STATUS, response);
 }
 
-void cftp_retr_authenticated_action(const char *input,
-                                    const char *params,
+void cftp_retr_authenticated_action(cftp_command_t *cmd,
                                     connection_t *connection)
 {
-    IF(strnlen(params, MAX_COMMAND_LENGTH) != 0)
-    cftp_send_file(connection, params);
-    ELSE send_control_message(
-        connection, FTP_STATUS_SYNTAX_ERROR_PARAMS, "File path not provided");
+    IF(cmd->argc != 1)
+    {
+        send_control_message(connection,
+                             FTP_STATUS_SYNTAX_ERROR_PARAMS,
+                             "File path not provided");
+        return;
+    }
+    cftp_send_file(connection, cmd->args[0]);
 }
 
-void cftp_stor_authenticated_action(const char *input,
-                                    const char *params,
+void cftp_stor_authenticated_action(cftp_command_t *cmd,
                                     connection_t *connection)
 {
-    IF(strnlen(params, MAX_COMMAND_LENGTH) != 0)
-    cftp_recv_file_with_evbuffer(connection, params);
-    ELSE send_control_message(
-        connection, FTP_STATUS_SYNTAX_ERROR_PARAMS, "File path not provided");
+    IF(cmd->argc != 1)
+    {
+        send_control_message(connection,
+                             FTP_STATUS_SYNTAX_ERROR_PARAMS,
+                             "File path not provided");
+        return;
+    }
+
+    cftp_recv_file_with_evbuffer(connection, cmd->args[0]);
 }
 
-void cftp_mdtm_authenticated_action(const char *input,
-                                    const char *params,
+void cftp_mdtm_authenticated_action(cftp_command_t *cmd,
                                     connection_t *connection)
 {
-    IF(strnlen(params, MAX_COMMAND_LENGTH) != 0)
-    handle_mdtm_command(connection, params);
-    ELSE send_control_message(
-        connection, FTP_STATUS_SYNTAX_ERROR_PARAMS, "File path not provided");
+    IF(cmd->argc != 1)
+    {
+        send_control_message(connection,
+                             FTP_STATUS_SYNTAX_ERROR_PARAMS,
+                             "Invalid syntax in parameters");
+        return;
+    }
+    handle_mdtm_command(connection, cmd->args[0]);
 }
 
-void cftp_cwd_authenticated_action(const char *input,
-                                   const char *params,
+void cftp_dele_authenticated_action(cftp_command_t *cmd,
+                                    connection_t *connection)
+{
+    handle_dele_command(cmd, connection);
+}
+
+void cftp_cwd_authenticated_action(cftp_command_t *cmd,
                                    connection_t *connection)
 {
-    IF(strnlen(params, MAX_COMMAND_LENGTH) != 0)
-    handle_cwd_command(connection, params);
+    IF(cmd->argc != 1)
+    {
+        send_control_message(connection,
+                             FTP_STATUS_SYNTAX_ERROR_PARAMS,
+                             "Invalid syntax in parameters");
+        return;
+    }
+
+    IF(strnlen(cmd->args[0], PATH_MAX) != 0)
+    handle_cwd_command(connection, cmd->args[0]);
     ELSE send_control_message(
         connection, FTP_STATUS_SYNTAX_ERROR_PARAMS, "Path not provided");
 }
 
-void cftp_pwd_authenticated_action(const char *input,
-                                   const char *params,
+void cftp_pwd_authenticated_action(cftp_command_t *cmd,
                                    connection_t *connection)
 {
     char cwd[PATH_MAX];
     IF(getcwd(cwd, sizeof(cwd)) != NULL)
     {
-        char response[PATH_MAX + 64];
+        char response[PATH_MAX + 32];
         snprintf(
             response, sizeof(response), "\"%s\" is current directory", cwd);
         send_control_message(connection, FTP_STATUS_PATHNAME_CREATED, response);
@@ -325,18 +350,17 @@ void cftp_pwd_authenticated_action(const char *input,
                               "Failed to get current directory");
 }
 
-void cftp_abor_authenticated_action(const char *input,
-                                    const char *params,
+void cftp_abor_authenticated_action(cftp_command_t *cmd,
                                     connection_t *connection)
 {
-    if (connection->data_active)
+    IF(connection->data_active)
     {
         close_data_connection(connection);
         send_control_message(connection,
                              FTP_STATUS_ACTION_ABORTED,
                              "closed data connection; tansfer aborted");
     }
-    else
+    ELSE
     {
         connection->control_write_cb = close_data_connection_on_writecb;
         send_control_message(connection,
@@ -345,42 +369,52 @@ void cftp_abor_authenticated_action(const char *input,
     }
 }
 
-void cftp_authenticated(const char *input,
-                        const char *params,
-                        connection_t *connection)
+void cftp_authenticated(cftp_command_t *cmd, connection_t *connection)
 {
     send_control_message(
         connection, FTP_STATUS_USER_LOGGED_IN, "Already logged in");
 }
 
-void cftp_user_authenticated(const char *input,
-                             const char *params,
-                             connection_t *connection)
+void cftp_user_authenticated(cftp_command_t *cmd, connection_t *connection)
 {
-    if (user_exists(params, connection))
+    IF(cmd->argc != 1)
+    {
+        connection->control_write_cb = disable_connection_cb;
         send_control_message(connection,
-                             FTP_STATUS_USER_NAME_OK,
-                             "User name okay, need password");
-    else
-        send_control_message(
-            connection, FTP_STATUS_NOT_LOGGED_IN, "User not found");
+                             FTP_STATUS_SYNTAX_ERROR_PARAMS,
+                             "Invalid syntax in parameters");
+        return;
+    }
+
+    IF(user_exists(cmd->args[0], connection))
+    send_control_message(
+        connection, FTP_STATUS_USER_NAME_OK, "User name okay, need password");
+    ELSE send_control_message(
+        connection, FTP_STATUS_NOT_LOGGED_IN, "User not found");
 }
 
-void cftp_pass_authenticated(const char *input,
-                             const char *params,
-                             connection_t *connection)
+void cftp_pass_authenticated(cftp_command_t *cmd, connection_t *connection)
 {
-    if (authenticate_and_switch_user(
-            connection->username, params, connection->error_buf))
+    IF(cmd->argc != 1)
+    {
+        connection->control_write_cb = disable_connection_cb;
+        send_control_message(connection,
+                             FTP_STATUS_SYNTAX_ERROR_PARAMS,
+                             "Invalid syntax in parameters");
+        return;
+    }
+
+    IF(authenticate_and_switch_user(
+        connection->username, cmd->args[0], connection->error_buf))
     {
         send_control_message(
             connection, FTP_STATUS_USER_LOGGED_IN, "User logged in");
         connection->authenticated = 1;
     }
-    else
+    ELSE
     {
         ERROR("%s", connection->error_buf);
-        connection->control_write_cb = close_connection_cb;
+        connection->control_write_cb = disable_connection_cb;
         send_control_message(
             connection, FTP_STATUS_NOT_LOGGED_IN, "Invalid credentials");
     }

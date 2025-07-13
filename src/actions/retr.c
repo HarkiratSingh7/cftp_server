@@ -43,12 +43,12 @@ static void ftp_send_file_with_evbuffer(connection_t *connection,
         close(fd);
         return;
     }
-    INFO("Sending file");
+
     send_control_message(
         connection, FTP_STATUS_FILE_STATUS_OKAY, "Sending file");
 
     file_stream_t *fs = calloc(1, sizeof(file_stream_t));
-    INFO("Able to allocated buffer");
+
     fs->fd = fd;
     fs->filesize = st.st_size;
 

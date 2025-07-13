@@ -37,7 +37,9 @@ void data_connection_accept_cb(struct evconnlistener *listener,
     }
 
     /* Listener must be closed, we only allow 1 data connection */
-    INFO("Got a data connection from %s", ip_str);
+    INFO("Data connection with %s for %s",
+         connection->source_ip,
+         connection->username);
     evconnlistener_free(listener);
 
     connection->data_active = 0; /* Set later */
@@ -49,13 +51,13 @@ void data_connection_accept_cb(struct evconnlistener *listener,
     /*  Create a new bufferevent for the data connection */
     if (!connection->data_tls_required)
     {
-        INFO("Got plaintext data !");
+        DEBG("Got plaintext data for %s!", connection->username);
         connection->data_bev = bufferevent_socket_new(
             base, fd, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_DEFER_CALLBACKS);
     }
     else
     {
-        INFO("Got encrypted data !");
+        DEBG("Got encrypted data for %s !", connection->username);
         connection->data_ssl = SSL_new(connection->ssl_ctx);
         connection->data_bev = bufferevent_openssl_socket_new(
             base,
@@ -82,7 +84,7 @@ void data_connection_accept_cb(struct evconnlistener *listener,
     if (!connection->data_tls_required)
         __sync_add_and_fetch_8(&connection->data_active, 1);
 
-    INFO("Data connection established on fd %d", fd);
+    DEBG("Data connection established on fd %d", fd);
 }
 
 void data_connection_listener_config(connection_t *connection, int extended)
@@ -92,8 +94,6 @@ void data_connection_listener_config(connection_t *connection, int extended)
         ERROR("Invalid connection object passed !");
         return;
     }
-
-    INFO("Inside data connection listener config");
 
     if (connection->pasv_listener)
     {
@@ -309,6 +309,9 @@ void close_data_connection(connection_t *connection)
         return;
     }
 
+    INFO("Data connection closed with %s for %s",
+         connection->source_ip,
+         connection->username);
     bufferevent_setcb(connection->data_bev, NULL, NULL, NULL, NULL);
     bufferevent_disable(connection->data_bev, EV_READ | EV_WRITE);
     bufferevent_free(connection->data_bev);
