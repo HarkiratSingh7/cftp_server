@@ -44,6 +44,7 @@ void register_interprocess_fd_on_child(int interprocess_fd,
     DEBG("Registered interprocess fd for child: %d", interprocess_fd);
     struct event_base *base =
         event_base_new(); /* Nested event base for ipc purpose only */
+
     connection->interprocess_bev =
         bufferevent_socket_new(base, interprocess_fd, BEV_OPT_CLOSE_ON_FREE);
     if (!connection->interprocess_bev)
@@ -61,12 +62,15 @@ void register_interprocess_fd_on_child(int interprocess_fd,
  */
 void event_cb(struct bufferevent *bev, short events, void *ctx)
 {
-    if (events & BEV_EVENT_ERROR)
-    {
-        ERROR("Error from bufferevent");
-    }
+    if (!ctx) return;
+
+    if (events & BEV_EVENT_ERROR) ERROR("Error from bufferevent");
+
     if (events & (BEV_EVENT_EOF | BEV_EVENT_ERROR))
     {
+        bufferevent_disable(bev, EV_READ | EV_WRITE);
+        bufferevent_setcb(bev, NULL, NULL, NULL, ctx);
+        bufferevent_free(bev);
         if (getuid() != 0)
         {
             ERROR(
@@ -74,8 +78,26 @@ void event_cb(struct bufferevent *bev, short events, void *ctx)
                 "process exited");
             exit(-1);
         }
+    }
+}
 
-        bufferevent_free(bev);
+void on_parent_dead(evutil_socket_t fd,
+                    short events,
+                    void *ctx __attribute__((unused)))
+{
+    INFO("IPC pipe event occurred %" PRId16, events);
+    char dummy[1];
+    ssize_t n = read(fd, dummy, sizeof(dummy));
+    if (n == 0)
+    {
+        // Parent closed its end (EOF)
+        ERROR("Parent process died. Exiting child.");
+        exit(1);
+    }
+    else if (n < 0)
+    {
+        perror("read");
+        exit(1);
     }
 }
 

@@ -104,6 +104,8 @@ typedef struct
     /* Interprocess Communication */
     struct bufferevent *interprocess_bev; /* Buffer event for interprocess
                                               communication */
+
+    struct event *timeout_event;
 } connection_t;
 
 int get_random_unused_port(
@@ -111,5 +113,6 @@ int get_random_unused_port(
 
 void on_read(struct bufferevent *bev, void *cookie);
 void fill_source_ip(struct sockaddr *addr, char ip_str[]);
+void disable_connection_cb(struct bufferevent *bev, void *ctx);
 
 #endif

@@ -1,6 +1,12 @@
 cmake_minimum_required(VERSION 3.10)
 project(cftp_server C)
 
+set(CMAKE_C_STANDARD 99)
+# Link required libraries
+find_package(OpenSSL REQUIRED)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LIBEVENT REQUIRED libevent libevent_openssl)
+
 # Misc
 set(CERT_DIR ${PROJECT_SOURCE_DIR}/certs)
 set(KEY_FILE ${CERT_DIR}/server.key)
@@ -20,11 +26,10 @@ add_custom_target(generate_certs ALL
     DEPENDS ${KEY_FILE} ${CRT_FILE}
 )
 
-set(CMAKE_C_STANDARD 99)
 
 # Include header files
 include_directories(src/actions)
-include_directories(src/core)
+include_directories(src/core)   
 include_directories(src/engine)
 include_directories(src/ipc)
 include_directories(src/security)
@@ -69,13 +74,36 @@ set(SOURCES
 add_executable(cftp_server ${SOURCES})
 add_dependencies(cftp_server generate_certs)
 
-# Link required libraries
-find_package(OpenSSL REQUIRED)
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(LIBEVENT REQUIRED libevent libevent_openssl)
-
-target_include_directories(cftp_server PRIVATE ${LIBEVENT_INCLUDE_DIRS})
+# Optimization flags for release
+target_compile_options(cftp_server PRIVATE -O3)
+target_link_options(cftp_server PRIVATE -s)  # Strip symbols
+target_compile_definitions(cftp_server PRIVATE NDEBUG)  # Disable asserts
 target_link_libraries(cftp_server ${LIBEVENT_LIBRARIES} OpenSSL::SSL OpenSSL::Crypto crypt)
+target_include_directories(cftp_server PRIVATE ${LIBEVENT_INCLUDE_DIRS})
+
+# ----------------------------------------
+# Debug Executable (Full Debug + Valgrind-friendly)
+# ----------------------------------------
+add_executable(cftp_server_debug ${SOURCES})
+add_dependencies(cftp_server_debug generate_certs)
+
+# Debug flags: DWARF-4, No LTO, lots of diagnostics
+target_compile_options(cftp_server_debug PRIVATE
+    -O0
+    -g3
+    -gdwarf-4
+    -Wall
+    -Wextra
+    -Wpedantic
+    -fno-omit-frame-pointer
+)
+# target_link_options(cftp_server_debug PRIVATE
+#     -fsanitize=address,undefined
+# )
+target_compile_definitions(cftp_server_debug PRIVATE DEBUG)  # Optional debug macros
+target_link_libraries(cftp_server_debug ${LIBEVENT_LIBRARIES} OpenSSL::SSL OpenSSL::Crypto crypt)
+target_include_directories(cftp_server_debug PRIVATE ${LIBEVENT_INCLUDE_DIRS})
+
 
 # Add strict warnings and treat them as errors for GCC/Clang
 if (CMAKE_C_COMPILER_ID MATCHES "Clang" OR CMAKE_C_COMPILER_ID MATCHES "GNU")

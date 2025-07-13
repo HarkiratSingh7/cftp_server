@@ -62,6 +62,8 @@ static bool parse_list_flags(cftp_command_t *cmd, list_flags_t *flags)
 
 static void close_on_listcb(struct bufferevent *bev, void *ctx)
 {
+    if (!bev) return;
+
     DEBG("Sent Directory OK");
     connection_t *connection = (connection_t *)ctx;
     connection->control_write_cb = close_data_connection_on_writecb;
@@ -138,7 +140,7 @@ void handle_list_command(cftp_command_t *command,
 static void tls_on_bev_event_connected(struct bufferevent *bev, void *ctx)
 {
     connection_t *connection = (connection_t *)ctx;
-    if (!connection)
+    if (!connection || !bev)
     {
         ERROR("Invalid connection object");
         return;

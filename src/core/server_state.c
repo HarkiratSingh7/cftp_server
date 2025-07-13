@@ -42,4 +42,13 @@ void init_server_state(int max_connections,
         ERROR("Failed to create event base");
         exit(-1);
     }
+
+    g_server_state.connection_timeout = 60;
+    g_server_state.data_connection_timeout = 9;
+}
+
+void destroy_server_state()
+{
+    SSL_CTX_free(g_server_state.ssl_ctx);
+    event_base_free(g_server_state.base);
 }

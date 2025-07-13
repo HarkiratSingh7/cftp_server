@@ -19,11 +19,15 @@ typedef struct
     int port;                /* Port on which the server is listening */
     SSL_CTX *ssl_ctx;        /* SSL context for secure connections */
     struct event_base *base; /* Event base for managing events */
+
+    int connection_timeout;      /* Timeout for a valid connection */
+    int data_connection_timeout; /* Timeout for a data connection acceptance */
 } server_state_t;
 
 void init_server_state(int max_connections,
                        const char *server_name,
                        const char *server_version,
                        int port);
+void destroy_server_state(void);
 
 #endif
