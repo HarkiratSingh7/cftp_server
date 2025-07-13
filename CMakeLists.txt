@@ -33,6 +33,7 @@ set(CFTP_ACTIONS
     src/actions/list.c
     src/actions/retr.c
     src/actions/stor.c
+    src/actions/dele.c
     src/actions/command_actions.c)
 
 set(CFTP_IPC

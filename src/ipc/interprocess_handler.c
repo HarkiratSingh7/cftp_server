@@ -25,7 +25,7 @@ typedef struct
 
 void register_interprocess_fd_on_server(int interprocess_fd)
 {
-    INFO("Registered interprocess fd: %d", interprocess_fd);
+    DEBG("Registered interprocess fd: %d", interprocess_fd);
     struct bufferevent *bev = bufferevent_socket_new(
         g_server_state.base, interprocess_fd, BEV_OPT_CLOSE_ON_FREE);
     if (!bev)
@@ -41,7 +41,7 @@ void register_interprocess_fd_on_server(int interprocess_fd)
 void register_interprocess_fd_on_child(int interprocess_fd,
                                        connection_t *connection)
 {
-    INFO("Registered interprocess fd for child: %d", interprocess_fd);
+    DEBG("Registered interprocess fd for child: %d", interprocess_fd);
     struct event_base *base =
         event_base_new(); /* Nested event base for ipc purpose only */
     connection->interprocess_bev =
@@ -89,7 +89,7 @@ static void ipc_reply_cb(struct bufferevent *bev, void *ctx)
     reply_ctx->buffer[n] = '\0';
 
     reply_ctx->reply_received = 1;
-    INFO("IPC callback received reply: %s", reply_ctx->buffer);
+    DEBG("IPC callback received reply: %s", reply_ctx->buffer);
 
     event_base_loopexit(bufferevent_get_base(bev), NULL);
 }
@@ -110,20 +110,16 @@ static void ask_custom_command(connection_t *connection,
         connection->interprocess_bev, ipc_reply_cb, NULL, event_cb, &reply_ctx);
 
     bufferevent_write(connection->interprocess_bev, buffer, strlen(buffer));
-    INFO("Sent custom command, now waiting for reply...");
+    DEBG("Sent custom command, now waiting for reply...");
 
     /*TODO: Add a timeout here */
 
     event_base_dispatch(bufferevent_get_base(connection->interprocess_bev));
 
     if (reply_ctx.reply_received)
-    {
-        INFO("ask_custom_command finished with reply: %s", reply_ctx.buffer);
-    }
+        DEBG("ask_custom_command finished with reply: %s", reply_ctx.buffer);
     else
-    {
         ERROR("ask_custom_command failed: no reply received.");
-    }
 
     bufferevent_setcb(
         connection->interprocess_bev, NULL, NULL, event_cb, connection);

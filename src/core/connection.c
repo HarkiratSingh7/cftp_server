@@ -22,7 +22,7 @@ void control_connection_accept_cb(struct evconnlistener *listener,
                                   int len,
                                   void *ctx)
 {
-    INFO("Accepted new connection on fd %d", fd);
+    DEBG("Accepted new connection on fd %d", fd);
     SSL_CTX *ssl_ctx = (SSL_CTX *)ctx;
 
     /* first create a socket pair with the main process */
@@ -63,8 +63,6 @@ void on_read(struct bufferevent *bev, void *cookie)
     char input[1024] = {0};
     struct evbuffer *input_buf = bufferevent_get_input(bev);
     evbuffer_remove(input_buf, input, sizeof(input) - 1);
-
-    INFO("Received: %s", input);
 
     if (cookie)
         execute_ftp_command(input, connection);
@@ -121,17 +119,11 @@ void fill_source_ip(struct sockaddr *addr, char ip_str[])
     {
         struct sockaddr_in *sin = (struct sockaddr_in *)addr;
         inet_ntop(AF_INET, &(sin->sin_addr), ip_str, INET_ADDRSTRLEN);
-        INFO("Client connected from IPv4: %s:%d\n",
-             ip_str,
-             ntohs(sin->sin_port));
     }
     else if (addr->sa_family == AF_INET6)
     {
         struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)addr;
         inet_ntop(AF_INET6, &(sin6->sin6_addr), ip_str, INET6_ADDRSTRLEN);
-        INFO("Client connected from IPv6: [%s]:%d\n",
-             ip_str,
-             ntohs(sin6->sin6_port));
     }
     else
         INFO("Unknown address family %d\n", addr->sa_family);

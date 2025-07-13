@@ -19,10 +19,9 @@ static void on_write(struct bufferevent *bev, void *ctx);
 
 static void on_event(struct bufferevent *bev, short events, void *ctx)
 {
-    INFO("Inside on_event, events: %d", events);
     if (events & BEV_EVENT_CONNECTED)
     {
-        INFO("TLS handshake complete");
+        DEBG("TLS handshake complete");
 
         /*  Only now send the greeting */
 
@@ -54,7 +53,6 @@ void start_control_connection_loop(evutil_socket_t fd, connection_t *connection)
         return;
     }
 
-    INFO("Starting control connection loop !");
     connection->base = event_base_new();
     connection->fd = fd;
 
@@ -78,7 +76,6 @@ void start_control_connection_loop(evutil_socket_t fd, connection_t *connection)
 
     event_base_dispatch(connection->base);
     event_base_free(connection->base);
-    INFO("Control connection handler exited");
     free(connection);
 }
 
