@@ -46,6 +46,9 @@ static void print_log_event(const char *message, int is_newline)
 void initialize_logger(logging_function_cb log_func)
 {
     logger_g.enabled_logs = INF_LEVEL | WRN_LEVEL | ERR_LEVEL;
+#ifdef DEBUG
+    logger_g.enabled_logs |= DBG_LEVEL;
+#endif
 
     logger_g.log_func = log_func;
 }

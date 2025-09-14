@@ -106,7 +106,7 @@ void cftp_quit_action(cftp_command_t *cmd, connection_t *connection)
     DEBG("Invoking for %s", cmd->command);
     /* TODO: ADD TO A TIMER Instead of freeing now ! Also disable read write
      * from here only*/
-    connection->control_write_cb = disable_connection_cb;
+    // connection->control_write_cb = disable_connection_cb;
     send_control_message(connection, FTP_STATUS_SERVICE_CLOSING, "Goodbye");
 }
 
@@ -335,6 +335,100 @@ void cftp_dele_authenticated_action(cftp_command_t *cmd,
     handle_dele_command(cmd, connection);
 }
 
+void cftp_mkd_authenticated_action(cftp_command_t *cmd,
+                                   connection_t *connection)
+{
+    IF(cmd->argc != 1)
+    {
+        send_control_message(connection,
+                             FTP_STATUS_SYNTAX_ERROR_PARAMS,
+                             "Invalid syntax in parameters");
+        return;
+    }
+
+    IF(!is_path_safe(cmd->args[0]))
+    {
+        send_control_message(connection,
+                             FTP_STATUS_FILE_NAME_NOT_ALLOWED,
+                             "File name not allowed");
+        return;
+    }
+
+    struct stat st;
+    if (stat(cmd->args[0], &st) == 0)
+    {
+        send_control_message(connection,
+                             FTP_STATUS_FILE_ACTION_NOT_TAKEN_PERM,
+                             "Directory already exists");
+        return;
+    }
+
+    IF(mkdir(cmd->args[0], 0755) == 0)
+    {
+        DEBG(
+            "Created directory: %s for %s", cmd->args[0], connection->username);
+        send_control_message(connection,
+                             FTP_STATUS_PATHNAME_CREATED,
+                             "Make directory successful");
+    }
+    ELSE
+    {
+        ERROR("Failed to create directory: %s for %s",
+              cmd->args[0],
+              connection->username);
+        send_control_message(connection,
+                             FTP_STATUS_FILE_ACTION_NOT_TAKEN_PERM,
+                             "Failed to create directory.");
+    }
+}
+
+void cftp_rmd_authenticated_action(cftp_command_t *cmd,
+                                   connection_t *connection)
+{
+    IF(cmd->argc != 1)
+    {
+        send_control_message(connection,
+                             FTP_STATUS_SYNTAX_ERROR_PARAMS,
+                             "Invalid syntax in parameters");
+        return;
+    }
+
+    IF(!is_path_safe(cmd->args[0]))
+    {
+        send_control_message(connection,
+                             FTP_STATUS_FILE_NAME_NOT_ALLOWED,
+                             "File name not allowed");
+        return;
+    }
+
+    struct stat st;
+    if (stat(cmd->args[0], &st) != 0 || !S_ISDIR(st.st_mode))
+    {
+        send_control_message(connection,
+                             FTP_STATUS_FILE_ACTION_NOT_TAKEN_PERM,
+                             "Directory not found");
+        return;
+    }
+
+    IF(rmdir(cmd->args[0]) == 0)
+    {
+        DEBG(
+            "Removed directory: %s for %s", cmd->args[0], connection->username);
+        send_control_message(connection,
+                             FTP_STATUS_FILE_ACTION_OK,
+                             "Remove directory successful");
+    }
+    ELSE
+    {
+        ERROR("Failed to remove directory: %s for %s",
+              cmd->args[0],
+              connection->username);
+        send_control_message(connection,
+                             FTP_STATUS_FILE_ACTION_NOT_TAKEN_PERM,
+                             "Failed to remove directory. Ensure it's empty.");
+    }
+}
+
 void cftp_cwd_authenticated_action(cftp_command_t *cmd,
                                    connection_t *connection)
 {
@@ -437,7 +531,8 @@ void cftp_pass_authenticated(cftp_command_t *cmd, connection_t *connection)
     ELSE
     {
         ERROR("%s", connection->error_buf);
-        connection->control_write_cb = disable_connection_cb;
+        // connection->control_write_cb = disable_connection_cb;
+        // TODO: Add a timer here to close connection after some time
         send_control_message(
             connection, FTP_STATUS_NOT_LOGGED_IN, "Invalid credentials");
     }

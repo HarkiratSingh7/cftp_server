@@ -116,7 +116,17 @@ void data_connection_listener_config(connection_t *connection, int extended)
 
     if (getsockname(connection->fd, (struct sockaddr *)&ctrl_addr, &len) == 0)
     {
-        int pasv_port = get_random_unused_port();
+        int pasv_port = select_leftmost_available_port();
+
+        if (pasv_port < g_server_state.pasv_range.start ||
+            pasv_port > g_server_state.pasv_range.end)
+        {
+            ERROR("No passive ports available !");
+            send_control_message(connection,
+                                 FTP_STATUS_CANNOT_OPEN_DATA,
+                                 "Can't open passive connection");
+            return;
+        }
 
         struct sockaddr_in pasv_addr = {0};
         len = sizeof(pasv_addr);
@@ -124,7 +134,7 @@ void data_connection_listener_config(connection_t *connection, int extended)
         pasv_addr.sin_family = AF_INET;
         pasv_addr.sin_addr.s_addr = ctrl_addr.sin_addr.s_addr;
         pasv_addr.sin_port = htons(pasv_port);
-
+        connection->data_port = pasv_port;
         connection->pasv_listener =
             evconnlistener_new_bind(connection->base,
                                     data_connection_accept_cb,
@@ -143,7 +153,8 @@ void data_connection_listener_config(connection_t *connection, int extended)
         }
 
         /* Start a timer */
-        struct timeval timeout = {g_server_state.data_connection_timeout, 0};
+        struct timeval timeout = {
+            g_server_state.config.data_connection_accept_timeout, 0};
         connection->timeout_event =
             evtimer_new(connection->base, kill_listener_on_timeout, connection);
         evtimer_add(connection->timeout_event, &timeout);
@@ -304,6 +315,7 @@ static void data_connection_event_cb(struct bufferevent *bev,
         DEBG("Destroying data connection for %s", connection->username);
 
         close_data_connection(connection);
+        release_port(connection->data_port);
         return;
     }
 }
@@ -358,6 +370,7 @@ static void kill_listener_on_timeout(evutil_socket_t fd __attribute__((unused)),
         evconnlistener_disable(connection->pasv_listener);
         evconnlistener_free(connection->pasv_listener);
         connection->pasv_listener = NULL;
+        release_port(connection->data_port);
         ERROR(
             "Timed out for data connection, disabling the data connection "
             "listener for %s!",

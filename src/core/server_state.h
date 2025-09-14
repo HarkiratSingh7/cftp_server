@@ -6,28 +6,36 @@
 #define SERVER_STATE_H
 
 #include <event2/event.h>
+#include <stdint.h>
 
+#include "../config_manager/config_manager.h"
 #include "connection.h"
+#include "structures/segment_tree.h"
 
 typedef struct
 {
-    int max_connections;     /* Maximum number of connections allowed */
-    int current_connections; /* Current number of active connections */
-    char server_name[256];   /* Name of the server */
-    char server_version[64]; /* Version of the server */
+    int start;
+    int end;
+    int n;             /* inclusive count */
+    segment_tree_t st; /* Segment tree to manage port allocations */
+} pasv_port_range_t;
+
+typedef struct
+{
+    configurations_t config; /* Server configurations */
+    pasv_port_range_t pasv_range;
+    uint32_t current_connections; /* Current number of active connections */
+    char server_version[64];      /* Version of the server */
     int is_running;          /* Flag to indicate if the server is running */
-    int port;                /* Port on which the server is listening */
     SSL_CTX *ssl_ctx;        /* SSL context for secure connections */
     struct event_base *base; /* Event base for managing events */
-
-    int connection_timeout;      /* Timeout for a valid connection */
-    int data_connection_timeout; /* Timeout for a data connection acceptance */
 } server_state_t;
 
-void init_server_state(int max_connections,
-                       const char *server_name,
-                       const char *server_version,
-                       int port);
+void init_server_state(void);
 void destroy_server_state(void);
+int connections_init_pasv_range(int start, int end);
+int select_leftmost_available_port(void);
+void release_port(int port);
+void connections_shutdown(void);
 
 #endif

@@ -81,7 +81,8 @@ void start_control_connection_loop(evutil_socket_t fd,
     event_add(parent_kill_event, NULL);
 
     /* Setup authentication timeout */
-    struct timeval timeout = {g_server_state.connection_timeout, 0};
+    struct timeval timeout = {g_server_state.config.connection_accept_timeout,
+                              0};
     connection->timeout_event =
         evtimer_new(connection->base, terminate_process_on_timeout, connection);
     evtimer_add(connection->timeout_event, &timeout);

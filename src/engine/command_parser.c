@@ -15,9 +15,9 @@
 #include "data_handler.h"
 #include "error.h"
 #include "ftp_status_codes.h"
-#include "hashmap.h"
 #include "interprocess_handler.h"
 #include "security.h"
+#include "structures/hashmap.h"
 
 /* This must follow: https://datatracker.ietf.org/doc/html/rfc959 */
 
