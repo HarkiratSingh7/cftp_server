@@ -60,6 +60,8 @@ DECL_ACTION_FOR_COMMAND(MDTM, cftp_mdtm_authenticated_action)
 DECL_ACTION_FOR_COMMAND(CWD, cftp_cwd_authenticated_action)
 DECL_ACTION_FOR_COMMAND(PWD, cftp_pwd_authenticated_action)
 DECL_ACTION_FOR_COMMAND(ABOR, cftp_abor_authenticated_action)
+DECL_ACTION_FOR_COMMAND(RMD, cftp_rmd_authenticated_action)
+DECL_ACTION_FOR_COMMAND(MKD, cftp_mkd_authenticated_action)
 DECL_ACTION_FOR_COMMAND(DELE, cftp_dele_authenticated_action)
 DECL_ACTION_FOR_COMMAND(NON_AUTH, cftp_non_authenticated)
 
@@ -115,6 +117,12 @@ static const command_action command_actions[] = {
                                  cftp_non_authenticated),
     ADD_COMMAND_WITH_DIFF_ACTION(ABOR,
                                  cftp_abor_authenticated_action,
+                                 cftp_non_authenticated),
+    ADD_COMMAND_WITH_DIFF_ACTION(MKD,
+                                 cftp_mkd_authenticated_action,
+                                 cftp_non_authenticated),
+    ADD_COMMAND_WITH_DIFF_ACTION(RMD,
+                                 cftp_rmd_authenticated_action,
                                  cftp_non_authenticated),
     ADD_COMMAND_WITH_DIFF_ACTION(DELE,
                                  cftp_dele_authenticated_action,

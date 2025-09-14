@@ -34,6 +34,7 @@ void register_interprocess_fd_on_server(int interprocess_fd)
         return;
     }
 
+    __sync_add_and_fetch(&g_server_state.current_connections, 1);
     bufferevent_setcb(bev, on_read, NULL, event_cb, NULL);
     bufferevent_enable(bev, EV_READ | EV_WRITE);
 }
@@ -71,6 +72,7 @@ void event_cb(struct bufferevent *bev, short events, void *ctx)
         bufferevent_disable(bev, EV_READ | EV_WRITE);
         bufferevent_setcb(bev, NULL, NULL, NULL, ctx);
         bufferevent_free(bev);
+        __sync_add_and_fetch(&g_server_state.current_connections, 1);
         if (getuid() != 0)
         {
             ERROR(

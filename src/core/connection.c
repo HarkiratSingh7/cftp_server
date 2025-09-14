@@ -18,12 +18,25 @@
 #include "interprocess_handler.h"
 #include "server_state.h"
 
+extern server_state_t g_server_state;
+
 void control_connection_accept_cb(struct evconnlistener *listener,
                                   evutil_socket_t fd,
                                   struct sockaddr *addr,
                                   int len __attribute__((unused)),
                                   void *ctx)
 {
+    if (g_server_state.current_connections >=
+        g_server_state.config.max_connections)
+    {
+        ERROR(
+            "Max connections reached, rejecting new connection, already got "
+            "%" PRIu32 " !",
+            g_server_state.current_connections);
+        close(fd);
+        return;
+    }
+
     DEBG("Accepted new connection on fd %d", fd);
     SSL_CTX *ssl_ctx = (SSL_CTX *)ctx;
 
