@@ -13,8 +13,8 @@
 /* Yummy colors */
 #define NORMAL_LEN 8
 #define KNRM "\033[1;0m"
-#define KRED "\x1B[31m"
-#define KGRN "\033[1;32m"
+#define KRED "\x1B[1;31m"
+#define KGRN "\033[32m"
 #define KYEL "\033[1;33m"
 #define KBLU "\033[1;34m"
 #define KMAG "\x1B[35m"

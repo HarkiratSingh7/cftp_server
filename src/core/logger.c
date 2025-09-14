@@ -45,8 +45,10 @@ static void print_log_event(const char *message, int is_newline)
 
 void initialize_logger(logging_function_cb log_func)
 {
-    logger_g.enabled_logs =
-        INF_LEVEL | DBG_LEVEL | WRN_LEVEL | ERR_LEVEL | PRN_LEVEL;
+    logger_g.enabled_logs = INF_LEVEL | WRN_LEVEL | ERR_LEVEL;
+#ifdef DEBUG
+    logger_g.enabled_logs |= DBG_LEVEL;
+#endif
 
     logger_g.log_func = log_func;
 }
@@ -56,17 +58,17 @@ static const char *get_log_str(enum logtype type)
     switch (type)
     {
         case ERR_LEVEL:
-            return KYEL "ERROR";
+            return KRED "ERROR";
         case INF_LEVEL:
             return KGRN "INFO";
         case WRN_LEVEL:
             return KYEL "WARNING";
         case DBG_LEVEL:
-            return KBLU "DEBUG";
+            return KCYN "DEBUG";
         case PRN_LEVEL:
-            return KCYN;
+            return KWHT;
         default:
-            return "INVALID";
+            return KMAG "INVALID";
     }
 }
 
@@ -80,21 +82,36 @@ __attribute__((format(printf, 5, 6))) void print_log(
 {
     if ((logger_g.enabled_logs & type) == 0x0) return;
 
-    char *message1 = calloc(1, LOGGER_HALF_BUFFER * 2 + NORMAL_LEN);
+    time_t now = time(NULL);
+    struct tm tm_info;
+    localtime_r(&now, &tm_info);
+
+    char time_buf[32];
+    strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S", &tm_info);
+
+    char message1[LOGGER_HALF_BUFFER * 2 + NORMAL_LEN];
     int res1 = 0, res2 = 0;
 
     memset(message1, 0, LOGGER_HALF_BUFFER * 2 + NORMAL_LEN);
 
+    const char *filename = strrchr(source_file, '/');
+    filename = filename ? filename + 1 : source_file;
+
     if ((type & PRN_LEVEL) == 0)
         res1 = snprintf(message1,
                         LOGGER_HALF_BUFFER,
-                        "%s: %s:%d: %s: ",
+                        "[%s] %s: %s:%d: %s: ",
+                        time_buf,
                         get_log_str(type),
-                        source_file,
+                        filename,
                         line_number,
                         function_name);
     else
-        res1 = snprintf(message1, LOGGER_HALF_BUFFER, "%s", get_log_str(type));
+        res1 = snprintf(message1,
+                        LOGGER_HALF_BUFFER,
+                        "[%s] %s",
+                        time_buf,
+                        get_log_str(type));
 
     char *message2 = message1 + res1;
 

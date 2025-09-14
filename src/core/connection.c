@@ -3,8 +3,10 @@
 #include <arpa/inet.h>
 #include <event2/buffer.h>
 #include <netinet/in.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/prctl.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -16,13 +18,26 @@
 #include "interprocess_handler.h"
 #include "server_state.h"
 
+extern server_state_t g_server_state;
+
 void control_connection_accept_cb(struct evconnlistener *listener,
                                   evutil_socket_t fd,
                                   struct sockaddr *addr,
-                                  int len,
+                                  int len __attribute__((unused)),
                                   void *ctx)
 {
-    INFO("Accepted new connection on fd %d", fd);
+    if (g_server_state.current_connections >=
+        g_server_state.config.max_connections)
+    {
+        ERROR(
+            "Max connections reached, rejecting new connection, already got "
+            "%" PRIu32 " !",
+            g_server_state.current_connections);
+        close(fd);
+        return;
+    }
+
+    DEBG("Accepted new connection on fd %d", fd);
     SSL_CTX *ssl_ctx = (SSL_CTX *)ctx;
 
     /* first create a socket pair with the main process */
@@ -34,27 +49,33 @@ void control_connection_accept_cb(struct evconnlistener *listener,
         return;
     }
 
+    int pipe_fd[2]; /* Setup parent - child killswitch i.e., if parent process
+                       dies then child process should not survive */
+    pipe(pipe_fd);
+
     pid_t child = fork();
     if (child == 0)
     {
+        close(pipe_fd[1]);
         evconnlistener_free(listener);
-        connection_t *conn = calloc(1, sizeof(connection_t));
-        conn->ssl_ctx = ssl_ctx;
-        conn->control_active = 1;
-        conn->interprocess_fd = rpc_fd[1];
-        fill_source_ip(addr, conn->source_ip);
-        INFO("Control connection with %s", conn->source_ip);
+        connection_t *connection = calloc(1, sizeof(connection_t));
+        connection->ssl_ctx = ssl_ctx;
+        connection->control_active = 1;
+        connection->interprocess_fd = rpc_fd[1];
+        fill_source_ip(addr, connection->source_ip);
+        INFO("Control connection with %s", connection->source_ip);
         close(rpc_fd[0]);
         register_interprocess_fd_on_child(
-            rpc_fd[1], conn); /* register the child side of the socket pair */
-        start_control_connection_loop(fd, conn);
-        exit(0);
+            rpc_fd[1],
+            connection); /* register the child side of the socket pair */
+        start_control_connection_loop(fd, connection, pipe_fd[0]);
     }
 
+    close(pipe_fd[0]);
     close(rpc_fd[1]);
+    close(fd); /* parent closes client's socket */
     register_interprocess_fd_on_server(
         rpc_fd[0]); /* register the parent side of the socket pair */
-    close(fd);      /* parent closes client's socket */
 }
 
 void on_read(struct bufferevent *bev, void *cookie)
@@ -63,8 +84,6 @@ void on_read(struct bufferevent *bev, void *cookie)
     char input[1024] = {0};
     struct evbuffer *input_buf = bufferevent_get_input(bev);
     evbuffer_remove(input_buf, input, sizeof(input) - 1);
-
-    INFO("Received: %s", input);
 
     if (cookie)
         execute_ftp_command(input, connection);
@@ -121,25 +140,33 @@ void fill_source_ip(struct sockaddr *addr, char ip_str[])
     {
         struct sockaddr_in *sin = (struct sockaddr_in *)addr;
         inet_ntop(AF_INET, &(sin->sin_addr), ip_str, INET_ADDRSTRLEN);
-        INFO("Client connected from IPv4: %s:%d\n",
-             ip_str,
-             ntohs(sin->sin_port));
     }
     else if (addr->sa_family == AF_INET6)
     {
         struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)addr;
         inet_ntop(AF_INET6, &(sin6->sin6_addr), ip_str, INET6_ADDRSTRLEN);
-        INFO("Client connected from IPv6: [%s]:%d\n",
-             ip_str,
-             ntohs(sin6->sin6_port));
     }
     else
         INFO("Unknown address family %d\n", addr->sa_family);
 }
 
-void close_data_connection_on_writecb(struct bufferevent *bev, void *ctx)
+void close_data_connection_on_writecb(struct bufferevent *bev
+                                      __attribute__((unused)),
+                                      void *ctx)
 {
     DEBG("Triggered close !");
     connection_t *connection = (connection_t *)ctx;
     close_data_connection(connection);
+}
+
+void disable_connection_cb(struct bufferevent *bev, void *ctx)
+{
+    if (!ctx) return;
+
+    connection_t *connection = (connection_t *)ctx;
+
+    INFO("Disabling connection !");
+    bufferevent_disable(bev, EV_READ | EV_WRITE);
+    bufferevent_free(bev);
+    event_base_loopbreak(connection->base);
 }
