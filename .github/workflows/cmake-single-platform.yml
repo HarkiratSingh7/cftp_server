@@ -1,0 +1,47 @@
+name: CMake on a single platform with tests
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+env:
+  BUILD_TYPE: Release
+  VENV_PATH: /opt/venv
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Build Release target
+      run: cmake -B build -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} && \
+           cmake --build build --config ${{ env.BUILD_TYPE }}
+
+    - name: Build Debug target and Unit Test library
+      run: |
+        cmake --build build --target cftp_server_debug
+        cmake --build build --target cftp_unit_test_lib
+
+    - name: Generate TLS Certificates (already wired as dependency but explicitly)
+      run: cmake --build build --target generate_certs
+
+    - name: Run CTest
+      working-directory: build
+      run: ctest -C ${{ env.BUILD_TYPE }} --output-on-failure
+
+    - name: Activate Python venv and install test dependencies
+      shell: bash
+      run: |
+        source $VENV_PATH/bin/activate
+        pip install -r requirements.txt  # Adjust if needed
+
+    - name: Run Pytest
+      shell: bash
+      run: |
+        source $VENV_PATH/bin/activate
+        pytest -sv
