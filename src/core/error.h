@@ -38,20 +38,6 @@ extern int enabled_logs;
 #define DEBG(...) LOGM(DBG_LEVEL, __VA_ARGS__)
 #define PRINT(...) LOGM(PRN_LEVEL, __VA_ARGS__)
 
-// #define LOGM(t, format...)                                          \
-//     {                                                               \
-//         if (enabled_logs & (t))                                     \
-//         {                                                           \
-//             print_log((t), __FILE__, __LINE__, __func__, ##format); \
-//         }                                                           \
-//     }
-
-// #define ERROR(a...) LOGM(ERR_LEVEL, ##a)
-// #define INFO(a...) LOGM(INF_LEVEL, ##a)
-// #define WARN(a...) LOGM(WRN_LEVEL, ##a)
-// #define DEBG(a...) LOGM(DBG_LEVEL, ##a)
-// #define PRINT(a...) LOGM(PRN_LEVEL, ##a)
-
 void hexdump(void *memory, size_t length);
 
 #endif  //_CFTP_ERROR_H

@@ -93,14 +93,14 @@ char *get_group_from_gid(uint32_t gid, struct group **result)
     return buffer;
 }
 
-int validate_params(const char *params, char *err_buf)
+int is_path_safe(const char *params)
 {
     if (params && strlen(params) > 0)
     {
         /*  Prevent traversal outside the chroot */
         if (strstr(params, "..") != NULL)
         {
-            snprintf("%s", 256, "550 Invalid path\r\n");
+            ERROR("Path .. is not allowed in %s !", params);
             return 0;
         }
     }
