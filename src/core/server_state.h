@@ -10,14 +10,12 @@
 
 #include "../config_manager/config_manager.h"
 #include "connection.h"
-#include "structures/segment_tree.h"
 
 typedef struct
 {
-    int start;
-    int end;
-    int n;             /* inclusive count */
-    segment_tree_t st; /* Segment tree to manage port allocations */
+    uint16_t start;
+    uint16_t end;
+    int n; /* inclusive count */
 } pasv_port_range_t;
 
 typedef struct
@@ -33,9 +31,6 @@ typedef struct
 
 void init_server_state(void);
 void destroy_server_state(void);
-int connections_init_pasv_range(int start, int end);
-int select_leftmost_available_port(void);
-void release_port(int port);
-void connections_shutdown(void);
+void connections_init_pasv_range(int start, int end);
 
 #endif

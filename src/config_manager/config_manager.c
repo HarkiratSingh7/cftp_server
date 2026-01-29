@@ -36,8 +36,8 @@ static int seed_default_config_if_missing(const char *path_opt)
         "connection_accept_timeout=60\n"
         "data_connection_accept_timeout=9\n"
         "\n# Ports range (IANA dynamic/private ports)\n"
-        "passive_port_start=50000\n"
-        "passive_port_end=60000\n"
+        "passive_port_start=40000\n"
+        "passive_port_end=41000\n"
         "port=21\n"
         "\n# Identity\n"
         "server_name=Harkirat's CFTP Server\n"
@@ -329,8 +329,8 @@ void fill_default_configurations(configurations_t *config)
     config->max_connections = 10000;
     config->connection_accept_timeout = 60;
     config->data_connection_accept_timeout = 9;
-    config->passive_port_start = 50000;
-    config->passive_port_end = 60000;
+    config->passive_port_start = 40000;
+    config->passive_port_end = 41000;
     config->port = 21;
     snprintf(config->server_name,
              sizeof(config->server_name),

@@ -43,7 +43,7 @@ RUN apt update -y && \
     apt install -y \
     ftp
 
-RUN pip install pre-commit -y
+RUN python3 -m pip install pre-commit
 
 CMD ["./build/cftp_server"]
 

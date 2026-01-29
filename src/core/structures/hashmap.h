@@ -7,10 +7,6 @@
 
 #include <stddef.h>
 
-/*
-    Implementation of my hash tables
-*/
-
 #define HASH_TABLE_INTIAL_SIZE 21
 #define DEFAULT_LOAD_FACTOR 0.75f
 
