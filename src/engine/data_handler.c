@@ -112,40 +112,41 @@ void data_connection_listener_config(connection_t *connection, int extended)
 
     struct sockaddr_in ctrl_addr = {0};
     socklen_t len = sizeof(ctrl_addr);
-    // memset(&ctrl_addr, 0, sizeof(ctrl_addr));
 
     if (getsockname(connection->fd, (struct sockaddr *)&ctrl_addr, &len) == 0)
     {
-        int pasv_port = select_leftmost_available_port();
-
-        if (pasv_port < g_server_state.pasv_range.start ||
-            pasv_port > g_server_state.pasv_range.end)
-        {
-            ERROR("No passive ports available !");
-            send_control_message(connection,
-                                 FTP_STATUS_CANNOT_OPEN_DATA,
-                                 "Can't open passive connection");
-            return;
-        }
-
         struct sockaddr_in pasv_addr = {0};
         len = sizeof(pasv_addr);
-
         pasv_addr.sin_family = AF_INET;
         pasv_addr.sin_addr.s_addr = ctrl_addr.sin_addr.s_addr;
-        pasv_addr.sin_port = htons(pasv_port);
-        connection->data_port = pasv_port;
-        connection->pasv_listener =
-            evconnlistener_new_bind(connection->base,
-                                    data_connection_accept_cb,
-                                    connection,
-                                    LEV_OPT_CLOSE_ON_FREE | LEV_OPT_REUSEABLE,
-                                    1,
-                                    (struct sockaddr *)&pasv_addr,
-                                    len);
+        uint16_t pasv_port = 0;
+
+        for (pasv_port = g_server_state.pasv_range.start;
+             pasv_port <= g_server_state.pasv_range.end;
+             ++pasv_port)
+        {
+            pasv_addr.sin_port = htons(pasv_port);
+            connection->data_port = pasv_port;
+            connection->pasv_listener = evconnlistener_new_bind(
+                connection->base,
+                data_connection_accept_cb,
+                connection,
+                LEV_OPT_CLOSE_ON_FREE | LEV_OPT_REUSEABLE,
+                1,
+                (struct sockaddr *)&pasv_addr,
+                len);
+            if (connection->pasv_listener)
+            {
+                DEBG("Passive listener created on port %" PRId32 " for %s",
+                     pasv_port,
+                     connection->username);
+                break;
+            }
+        }
 
         if (!connection->pasv_listener)
         {
+            ERROR("Failed to create passive listener for port !");
             send_control_message(connection,
                                  FTP_STATUS_CANNOT_OPEN_DATA,
                                  "Can't open passive connection");
@@ -315,7 +316,6 @@ static void data_connection_event_cb(struct bufferevent *bev,
         DEBG("Destroying data connection for %s", connection->username);
 
         close_data_connection(connection);
-        release_port(connection->data_port);
         return;
     }
 }
@@ -370,7 +370,6 @@ static void kill_listener_on_timeout(evutil_socket_t fd __attribute__((unused)),
         evconnlistener_disable(connection->pasv_listener);
         evconnlistener_free(connection->pasv_listener);
         connection->pasv_listener = NULL;
-        release_port(connection->data_port);
         ERROR(
             "Timed out for data connection, disabling the data connection "
             "listener for %s!",

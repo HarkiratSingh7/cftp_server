@@ -1,3 +1,7 @@
+/*
+    Author: Harkirat Singh
+*/
+
 #include "hashmap.h"
 
 #include <stdint.h>
@@ -10,10 +14,6 @@
 #define FNV_1A_OFFSET_BASIS 0xCBF29CE484222325
 #define FNV_1A_PRIME 0x100000001B3
 #define FNV_1A_CHECKSUM_LENGTH 0x8
-
-/*
-    Internal functions
-*/
 
 /* Hashing function */
 static uint64_t fnv1a_string_hash(const uint8_t *str);

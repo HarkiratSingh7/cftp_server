@@ -12,6 +12,11 @@
 
 #define ROOT "root"
 
+/*
+    TODO: Port send_control_message instead of passing a raw buffer to format
+   using snprintf and send
+*/
+
 int user_exists(const char *username, connection_t *connection)
 {
     if ((strncmp(username, ROOT, strlen(ROOT)) != 0) &&

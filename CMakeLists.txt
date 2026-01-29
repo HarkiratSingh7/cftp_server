@@ -59,7 +59,6 @@ set(CFTP_CORE
     src/core/connection.c
     src/core/error.c
     src/core/structures/hashmap.c
-    src/core/structures/segment_tree.c
     src/config_manager/config_manager.c
     src/core/logger.c
     src/core/server_state.c)
@@ -100,7 +99,7 @@ target_link_libraries(cftp_unit_test_lib ${LIBEVENT_LIBRARIES} OpenSSL::SSL Open
 target_include_directories(cftp_unit_test_lib PRIVATE ${LIBEVENT_INCLUDE_DIRS})
 
 # Debug flags: DWARF-4, No LTO, lots of diagnostics
-target_compile_options(cftp_server_debug PRIVATE
+target_compile_options(cftp_server_debug PRIVATE ${STRICT__WARNINGS}
     -O0
     -g3
     -gdwarf-4
@@ -109,13 +108,30 @@ target_compile_options(cftp_server_debug PRIVATE
     -Wpedantic
     -fno-omit-frame-pointer
 )
-# target_link_options(cftp_server_debug PRIVATE
-#     -fsanitize=address,undefined
-# )
+
+set(STRICT_WARNINGS
+    -Wall                   # all common warnings
+    -Wextra                 # extra warnings
+    -Wpedantic              # strict ISO compliance
+    -Werror                 # turn warnings into errors
+    -Wunused                 # warns about unused variables, functions, labels
+    -Wunused-function        # specifically unused functions
+    -Wunused-variable        # specifically unused variables
+    -Wunused-parameter       # unused function params
+    -Wshadow                # shadowing warnings
+    -Wuninitialized          # uninitialized vars
+    -Wmissing-prototypes     # functions must be declared before use
+    -Wstrict-prototypes      # strict C prototypes
+    -Wformat=2              # format string warnings
+)
+
+target_compile_options(cftp_server PRIVATE ${STRICT_WARNINGS})
+target_compile_options(cftp_server_debug PRIVATE ${STRICT_WARNINGS})
+
+target_link_options(cftp_server_debug PRIVATE -fsanitize=address,undefined)
 target_compile_definitions(cftp_server_debug PRIVATE DEBUG)  # Optional debug macros
 target_link_libraries(cftp_server_debug ${LIBEVENT_LIBRARIES} OpenSSL::SSL OpenSSL::Crypto crypt)
 target_include_directories(cftp_server_debug PRIVATE ${LIBEVENT_INCLUDE_DIRS})
-
 
 # Add strict warnings and treat them as errors for GCC/Clang
 if (CMAKE_C_COMPILER_ID MATCHES "Clang" OR CMAKE_C_COMPILER_ID MATCHES "GNU")
