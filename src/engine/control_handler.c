@@ -13,16 +13,21 @@
 #include "command_parser.h"
 #include "error.h"
 #include "ftp_status_codes.h"
+#include "interprocess_handler.h"
+#include "server_state.h"
+
+extern server_state_t g_server_state;
 
 static void on_event(struct bufferevent *bev, short events, void *ctx);
 static void on_write(struct bufferevent *bev, void *ctx);
 
 static void on_event(struct bufferevent *bev, short events, void *ctx)
 {
-    INFO("Inside on_event, events: %d", events);
+    if (!ctx) return;
+
     if (events & BEV_EVENT_CONNECTED)
     {
-        INFO("TLS handshake complete");
+        DEBG("TLS handshake complete");
 
         /*  Only now send the greeting */
 
@@ -31,7 +36,7 @@ static void on_event(struct bufferevent *bev, short events, void *ctx)
     else if (events & BEV_EVENT_EOF || events & BEV_EVENT_ERROR)
     {
         ERROR("Closing connection and freeing bufferevent");
-        bufferevent_free(bev);
+        disable_connection_cb(bev, ctx);
     }
 }
 
@@ -46,7 +51,9 @@ static void on_write(struct bufferevent *bev, void *ctx)
     connection->control_write_cb = NULL;
 }
 
-void start_control_connection_loop(evutil_socket_t fd, connection_t *connection)
+void start_control_connection_loop(evutil_socket_t fd,
+                                   connection_t *connection,
+                                   int pipe)
 {
     if (!connection)
     {
@@ -54,7 +61,6 @@ void start_control_connection_loop(evutil_socket_t fd, connection_t *connection)
         return;
     }
 
-    INFO("Starting control connection loop !");
     connection->base = event_base_new();
     connection->fd = fd;
 
@@ -69,17 +75,33 @@ void start_control_connection_loop(evutil_socket_t fd, connection_t *connection)
 
     connection->bev = bev;
 
+    /* Setup kill switch */
+    struct event *parent_kill_event = event_new(
+        connection->base, pipe, EV_READ | EV_PERSIST, on_parent_dead, NULL);
+    event_add(parent_kill_event, NULL);
+
+    /* Setup authentication timeout */
+    struct timeval timeout = {g_server_state.config.connection_accept_timeout,
+                              0};
+    connection->timeout_event =
+        evtimer_new(connection->base, terminate_process_on_timeout, connection);
+    evtimer_add(connection->timeout_event, &timeout);
+
     initialize_execution_engine(connection);
 
-    const char *welcome = "220 Welcome to CFTP Server\r\n";
-    bufferevent_write(bev, welcome, strlen(welcome));
+    send_control_message(
+        connection, FTP_STATUS_SERVICE_READY, "Welcome to CFTP Server");
+
     bufferevent_setcb(bev, on_read, on_write, on_event, connection);
     bufferevent_enable(bev, EV_READ | EV_WRITE);
 
     event_base_dispatch(connection->base);
     event_base_free(connection->base);
-    INFO("Control connection handler exited");
+
+    SSL_CTX_free(connection->ssl_ctx);
     free(connection);
+
+    exit(0);
 }
 
 void upgrade_to_tls(connection_t *connection)
@@ -141,4 +163,17 @@ void send_control_message(connection_t *connection,
         snprintf(buffer, sizeof(buffer), "%s\r\n", text);
 
     bufferevent_write(connection->bev, buffer, strnlen(buffer, sizeof(buffer)));
+}
+
+void terminate_process_on_timeout(evutil_socket_t fd __attribute__((unused)),
+                                  short what __attribute__((unused)),
+                                  void *arg)
+{
+    connection_t *connection = (connection_t *)arg;
+
+    connection->control_write_cb = disable_connection_cb;
+    send_control_message(connection,
+                         FTP_STATUS_SERVICE_NOT_AVAILABLE,
+                         "Control connection timed out !");
+    ERROR("Control connection timed out for %s", connection->username);
 }

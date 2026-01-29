@@ -8,6 +8,9 @@
 #include "control_handler.h"
 #include "error.h"
 #include "ftp_status_codes.h"
+#include "server_state.h"
+
+extern server_state_t g_server_state;
 
 /*!
  * @brief Write callback for data connection
@@ -17,17 +20,20 @@ static void data_connection_read_cb(struct bufferevent *bev, void *ctx);
 static void data_connection_event_cb(struct bufferevent *bev,
                                      short events,
                                      void *ctx);
+static void kill_listener_on_timeout(evutil_socket_t fd, short what, void *arg);
 
 void data_connection_accept_cb(struct evconnlistener *listener,
                                evutil_socket_t fd,
                                struct sockaddr *addr,
-                               int unused,
+                               int unused __attribute__((unused)),
                                void *ctx)
 {
     /* First of all the source incoming IP must be same ! */
     connection_t *connection = (connection_t *)ctx;
     char ip_str[INET6_ADDRSTRLEN];
     fill_source_ip(addr, ip_str);
+
+    DEBG("unused %d", unused);
 
     if (strncmp(connection->source_ip, ip_str, sizeof(INET6_ADDRSTRLEN)) != 0)
     {
@@ -37,7 +43,9 @@ void data_connection_accept_cb(struct evconnlistener *listener,
     }
 
     /* Listener must be closed, we only allow 1 data connection */
-    INFO("Got a data connection from %s", ip_str);
+    INFO("Data connection with %s for %s",
+         connection->source_ip,
+         connection->username);
     evconnlistener_free(listener);
 
     connection->data_active = 0; /* Set later */
@@ -49,13 +57,13 @@ void data_connection_accept_cb(struct evconnlistener *listener,
     /*  Create a new bufferevent for the data connection */
     if (!connection->data_tls_required)
     {
-        INFO("Got plaintext data !");
+        DEBG("Got plaintext data for %s!", connection->username);
         connection->data_bev = bufferevent_socket_new(
             base, fd, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_DEFER_CALLBACKS);
     }
     else
     {
-        INFO("Got encrypted data !");
+        DEBG("Got encrypted data for %s !", connection->username);
         connection->data_ssl = SSL_new(connection->ssl_ctx);
         connection->data_bev = bufferevent_openssl_socket_new(
             base,
@@ -82,7 +90,10 @@ void data_connection_accept_cb(struct evconnlistener *listener,
     if (!connection->data_tls_required)
         __sync_add_and_fetch_8(&connection->data_active, 1);
 
-    INFO("Data connection established on fd %d", fd);
+    evtimer_del(connection->timeout_event);
+    event_free(connection->timeout_event);
+
+    DEBG("Data connection established on fd %d", fd);
 }
 
 void data_connection_listener_config(connection_t *connection, int extended)
@@ -93,8 +104,6 @@ void data_connection_listener_config(connection_t *connection, int extended)
         return;
     }
 
-    INFO("Inside data connection listener config");
-
     if (connection->pasv_listener)
     {
         evconnlistener_free(connection->pasv_listener);
@@ -103,35 +112,53 @@ void data_connection_listener_config(connection_t *connection, int extended)
 
     struct sockaddr_in ctrl_addr = {0};
     socklen_t len = sizeof(ctrl_addr);
-    // memset(&ctrl_addr, 0, sizeof(ctrl_addr));
 
     if (getsockname(connection->fd, (struct sockaddr *)&ctrl_addr, &len) == 0)
     {
-        int pasv_port = get_random_unused_port();
-
         struct sockaddr_in pasv_addr = {0};
         len = sizeof(pasv_addr);
-
         pasv_addr.sin_family = AF_INET;
         pasv_addr.sin_addr.s_addr = ctrl_addr.sin_addr.s_addr;
-        pasv_addr.sin_port = htons(pasv_port);
+        uint16_t pasv_port = 0;
 
-        connection->pasv_listener =
-            evconnlistener_new_bind(connection->base,
-                                    data_connection_accept_cb,
-                                    connection,
-                                    LEV_OPT_CLOSE_ON_FREE | LEV_OPT_REUSEABLE,
-                                    1,
-                                    (struct sockaddr *)&pasv_addr,
-                                    len);
+        for (pasv_port = g_server_state.pasv_range.start;
+             pasv_port <= g_server_state.pasv_range.end;
+             ++pasv_port)
+        {
+            pasv_addr.sin_port = htons(pasv_port);
+            connection->data_port = pasv_port;
+            connection->pasv_listener = evconnlistener_new_bind(
+                connection->base,
+                data_connection_accept_cb,
+                connection,
+                LEV_OPT_CLOSE_ON_FREE | LEV_OPT_REUSEABLE,
+                1,
+                (struct sockaddr *)&pasv_addr,
+                len);
+            if (connection->pasv_listener)
+            {
+                DEBG("Passive listener created on port %" PRId32 " for %s",
+                     pasv_port,
+                     connection->username);
+                break;
+            }
+        }
 
         if (!connection->pasv_listener)
         {
+            ERROR("Failed to create passive listener for port !");
             send_control_message(connection,
                                  FTP_STATUS_CANNOT_OPEN_DATA,
                                  "Can't open passive connection");
             return;
         }
+
+        /* Start a timer */
+        struct timeval timeout = {
+            g_server_state.config.data_connection_accept_timeout, 0};
+        connection->timeout_event =
+            evtimer_new(connection->base, kill_listener_on_timeout, connection);
+        evtimer_add(connection->timeout_event, &timeout);
 
         char response[256];
 
@@ -309,6 +336,9 @@ void close_data_connection(connection_t *connection)
         return;
     }
 
+    INFO("Data connection closed with %s for %s",
+         connection->source_ip,
+         connection->username);
     bufferevent_setcb(connection->data_bev, NULL, NULL, NULL, NULL);
     bufferevent_disable(connection->data_bev, EV_READ | EV_WRITE);
     bufferevent_free(connection->data_bev);
@@ -328,4 +358,21 @@ void close_data_connection(connection_t *connection)
     }
 
     DEBG("Data connection closed for %s", connection->username);
+}
+
+static void kill_listener_on_timeout(evutil_socket_t fd __attribute__((unused)),
+                                     short what __attribute__((unused)),
+                                     void *arg)
+{
+    connection_t *connection = (connection_t *)arg;
+    if (connection->pasv_listener)
+    {
+        evconnlistener_disable(connection->pasv_listener);
+        evconnlistener_free(connection->pasv_listener);
+        connection->pasv_listener = NULL;
+        ERROR(
+            "Timed out for data connection, disabling the data connection "
+            "listener for %s!",
+            connection->username);
+    }
 }

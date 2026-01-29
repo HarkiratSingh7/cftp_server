@@ -18,8 +18,7 @@ static void print_log_to_console(const char *message) { printf("%s", message); }
 static void sigchld_handler(int signo)
 {
     (void)signo;  // unused
-    while (waitpid(-1, NULL, WNOHANG) > 0)
-        ;
+    while (waitpid(-1, NULL, WNOHANG) > 0);
 }
 
 static void setup_sigchld_handler()
@@ -43,16 +42,14 @@ int main()
     initialize_logger(print_log_to_console);
     setup_sigchld_handler();
 
-    init_server_state(1000, "CFTP Server", "1.0", 21);
+    init_server_state();
 
     start_server_listener(g_server_state.base,
                           g_server_state.ssl_ctx,
-                          g_server_state.port,
+                          g_server_state.config.port,
                           control_connection_accept_cb);
     event_base_dispatch(g_server_state.base);
 
-    event_base_free(g_server_state.base);
-    SSL_CTX_free(g_server_state.ssl_ctx);
-
+    destroy_server_state();
     return 0;
 }

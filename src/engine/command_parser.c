@@ -1,6 +1,7 @@
 #include "command_parser.h"
 
 #include <ctype.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -14,9 +15,9 @@
 #include "data_handler.h"
 #include "error.h"
 #include "ftp_status_codes.h"
-#include "hashmap.h"
 #include "interprocess_handler.h"
 #include "security.h"
+#include "structures/hashmap.h"
 
 /* This must follow: https://datatracker.ietf.org/doc/html/rfc959 */
 
@@ -26,30 +27,33 @@ static int register_command(const char *command,
                             command_execution_cb authenticated_cb,
                             command_execution_cb non_authenticated_cb,
                             connection_t *connection);
-
 inline static void parse_text_command(const char *input,
-                                      char *command_out,
-                                      size_t cmd_size,
-                                      char *params_out,
-                                      size_t param_size);
+                                      cftp_command_t *cmd_out);
 
 void execute_root_command(const char *input, struct bufferevent *bev)
 {
-    char command[256] = {0};
-    char params[1024] = {0};
-    char username_buf[256];
+    char username_buf[MAX_ARG_LEN];
 
-    /*  Parse the command and parameters */
-    parse_text_command(input, command, sizeof(command), params, sizeof(params));
+    cftp_command_t cmd;
+    parse_text_command(input, &cmd);
 
-    if (strcmp(command, "UID") == 0)
+    if (cmd.argc != 1)
+    {
+        ERROR("Invalid command format: %s", input);
+        write_text_response(bev, "500 Invalid UID format\r\n");
+        destroy_command(&cmd);
+        return;
+    }
+
+    if (strcmp(cmd.command, "UID") == 0)
     {
         uid_t requested_uid = 0;
 
-        if (sscanf(params, "%u", &requested_uid) != 1)
+        if (sscanf(cmd.args[0], "%u", &requested_uid) != 1)
         {
-            ERROR("Invalid UID format: %s", params);
+            ERROR("Invalid UID format: %s", input);
             write_text_response(bev, "500 Invalid UID format\r\n");
+            destroy_command(&cmd);
             return;
         }
 
@@ -59,18 +63,19 @@ void execute_root_command(const char *input, struct bufferevent *bev)
         else
             snprintf(username_buf, sizeof(username_buf), "unknown");
 
-        INFO("[PARENT] Found username '%s'. Sending back to child.\n",
+        DEBG("[PARENT] Found username '%s'. Sending back to child.\n",
              username_buf);
         bufferevent_write(bev, username_buf, strlen(username_buf) + 1);
     }
-    else if (strcmp(command, "GID") == 0)
+    else if (strcmp(cmd.command, "GID") == 0)
     {
         gid_t requested_gid = 0;
 
-        if (sscanf(params, "%u", &requested_gid) != 1)
+        if (sscanf(cmd.args[0], "%u", &requested_gid) != 1)
         {
-            ERROR("Invalid GID format: %s", params);
+            ERROR("Invalid GID format: %s", input);
             write_text_response(bev, "500 Invalid GID format\r\n");
+            destroy_command(&cmd);
             return;
         }
 
@@ -80,57 +85,135 @@ void execute_root_command(const char *input, struct bufferevent *bev)
         else
             snprintf(username_buf, sizeof(username_buf), "unknown");
 
-        INFO("[PARENT] Found username '%s'. Sending back to child.\n",
+        DEBG("[PARENT] Found username '%s'. Sending back to child.\n",
              username_buf);
         bufferevent_write(bev, username_buf, strlen(username_buf) + 1);
     }
+
+    destroy_command(&cmd);
 }
 
 void execute_ftp_command(const char *input, connection_t *connection)
 {
-    char command[MAX_COMMAND_LENGTH] = {0};
-    char params[MAX_COMMAND_LENGTH] = {0};
-
     /*  Parse the command and parameters */
-    parse_text_command(input, command, sizeof(command), params, sizeof(params));
-    INFO("Got command %s", input);
-    command_cb *command_cb = get_ptr_to_value_by_key(command_registry, command);
+    cftp_command_t cmd;
+    parse_text_command(input, &cmd);
+
+    DEBG("Got command %s", input);
+    command_cb *command_cb =
+        get_ptr_to_value_by_key(command_registry, cmd.command);
     if (command_cb)
     {
         if (connection->authenticated)
-            command_cb->authenticated_cb(command, params, connection);
+            command_cb->authenticated_cb(&cmd, connection);
         else
-            command_cb->non_authenticated_cb(command, params, connection);
+            command_cb->non_authenticated_cb(&cmd, connection);
     }
     else
-        cftp_invalid_action(command, params, connection);
+        cftp_invalid_action(&cmd, connection);
+
+    destroy_command(&cmd);
 }
 
 inline static void parse_text_command(const char *input,
-                                      char *command_out,
-                                      size_t cmd_size,
-                                      char *params_out,
-                                      size_t param_size)
+                                      cftp_command_t *cmd_out)
 {
+    memset(cmd_out, 0, sizeof(*cmd_out));
+
     while (isspace((unsigned char)*input)) input++;
 
     size_t i = 0;
-    while (*input && !isspace((unsigned char)*input) && i < cmd_size - 1)
+    while (*input && !isspace((unsigned char)*input) &&
+           i < sizeof(cmd_out->command) - 1)
     {
-        command_out[i++] = toupper((unsigned char)*input++);
+        cmd_out->command[i++] = toupper((unsigned char)*input++);
     }
-    command_out[i] = '\0';
+    cmd_out->command[i] = '\0';
 
     while (isspace((unsigned char)*input)) input++;
 
-    strncpy(params_out, input, param_size - 1);
-    params_out[param_size - 1] = '\0';
+    int argc = 0;
+    while (*input && argc < MAX_ARGS)
+    {
+        while (isspace((unsigned char)*input)) input++;
 
-    /*  Trim trailing whitespace from params */
-    size_t len = strlen(params_out);
-    while (len > 0 && isspace((unsigned char)params_out[len - 1]))
-        params_out[--len] = '\0';
+        if (*input == '\0') break;
+
+        char *arg = malloc(MAX_ARG_LEN);
+        if (!arg) break;
+
+        size_t j = 0;
+        bool in_quotes = false;
+
+        while (*input && j < MAX_ARG_LEN - 1)
+        {
+            if (*input == '"' && !in_quotes)
+            {
+                in_quotes = true;
+                input++;
+                continue;
+            }
+            else if (*input == '"' && in_quotes)
+            {
+                in_quotes = false;
+                input++;
+                continue;
+            }
+            else if (!in_quotes && isspace((unsigned char)*input))
+            {
+                break;
+            }
+            else if (*input == '\\' && input[1] != '\0')
+            {
+                arg[j++] = input[1];
+                input += 2;
+            }
+            else
+            {
+                arg[j++] = *input++;
+            }
+        }
+
+        arg[j] = '\0';
+        cmd_out->args[argc++] = arg;
+
+        while (isspace((unsigned char)*input)) input++;
+    }
+
+    cmd_out->argc = argc;
+    cmd_out->args[argc] = NULL;
 }
+
+void destroy_command(cftp_command_t *command)
+{
+    for (int i = 0; i < command->argc; ++i) free(command->args[i]);
+}
+
+// inline static void parse_text_command(const char *input,
+//                                       char *command_out,
+//                                       size_t cmd_size,
+//                                       char *params_out,
+//                                       size_t param_size)
+// {
+//     while (isspace((unsigned char)*input)) input++;
+
+//     size_t i = 0;
+//     while (*input && !isspace((unsigned char)*input) && i < cmd_size - 1)
+//     {
+//         command_out[i++] = toupper((unsigned char)*input++);
+//     }
+//     command_out[i] = '\0';
+
+//     while (isspace((unsigned char)*input)) input++;
+
+//     strncpy(params_out, input, param_size - 1);
+//     params_out[param_size - 1] = '\0';
+
+//     /*  Trim trailing whitespace from params */
+//     size_t len = strlen(params_out);
+//     while (len > 0 && isspace((unsigned char)params_out[len - 1]))
+//         params_out[--len] = '\0';
+// }
 
 static int register_command(const char *command,
                             command_execution_cb authenticated_cb,
@@ -160,8 +243,8 @@ void initialize_execution_engine(connection_t *connection)
             exit(-1);
         }
         else
-            INFO("Registered command %s", command_actions[i].action);
+            DEBG("Registered command %s", command_actions[i].action);
     }
 
-    INFO("Done registering commands !");
+    DEBG("Done registering commands !");
 }

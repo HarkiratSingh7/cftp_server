@@ -118,7 +118,7 @@ def upload_and_download(index, username, password, mode, ftp_home_dir, size_mb):
 @pytest.mark.parametrize("mode", ["plain", "tls"])
 def test_massive_parallel_file_transfers(ftp_test_user, ftp_home_dir, mode):
     username, password = ftp_test_user
-    num_files = 10
+    num_files = 20
     size_per_file_mb = 100  # ~1 GB total traffic
 
     processes = []

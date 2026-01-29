@@ -25,7 +25,7 @@ typedef struct
 
 void register_interprocess_fd_on_server(int interprocess_fd)
 {
-    INFO("Registered interprocess fd: %d", interprocess_fd);
+    DEBG("Registered interprocess fd: %d", interprocess_fd);
     struct bufferevent *bev = bufferevent_socket_new(
         g_server_state.base, interprocess_fd, BEV_OPT_CLOSE_ON_FREE);
     if (!bev)
@@ -34,6 +34,7 @@ void register_interprocess_fd_on_server(int interprocess_fd)
         return;
     }
 
+    __sync_add_and_fetch(&g_server_state.current_connections, 1);
     bufferevent_setcb(bev, on_read, NULL, event_cb, NULL);
     bufferevent_enable(bev, EV_READ | EV_WRITE);
 }
@@ -41,9 +42,10 @@ void register_interprocess_fd_on_server(int interprocess_fd)
 void register_interprocess_fd_on_child(int interprocess_fd,
                                        connection_t *connection)
 {
-    INFO("Registered interprocess fd for child: %d", interprocess_fd);
+    DEBG("Registered interprocess fd for child: %d", interprocess_fd);
     struct event_base *base =
         event_base_new(); /* Nested event base for ipc purpose only */
+
     connection->interprocess_bev =
         bufferevent_socket_new(base, interprocess_fd, BEV_OPT_CLOSE_ON_FREE);
     if (!connection->interprocess_bev)
@@ -61,12 +63,16 @@ void register_interprocess_fd_on_child(int interprocess_fd,
  */
 void event_cb(struct bufferevent *bev, short events, void *ctx)
 {
-    if (events & BEV_EVENT_ERROR)
-    {
-        ERROR("Error from bufferevent");
-    }
+    if (!ctx) return;
+
+    if (events & BEV_EVENT_ERROR) ERROR("Error from bufferevent");
+
     if (events & (BEV_EVENT_EOF | BEV_EVENT_ERROR))
     {
+        bufferevent_disable(bev, EV_READ | EV_WRITE);
+        bufferevent_setcb(bev, NULL, NULL, NULL, ctx);
+        bufferevent_free(bev);
+        __sync_add_and_fetch(&g_server_state.current_connections, 1);
         if (getuid() != 0)
         {
             ERROR(
@@ -74,8 +80,26 @@ void event_cb(struct bufferevent *bev, short events, void *ctx)
                 "process exited");
             exit(-1);
         }
+    }
+}
 
-        bufferevent_free(bev);
+void on_parent_dead(evutil_socket_t fd,
+                    short events,
+                    void *ctx __attribute__((unused)))
+{
+    INFO("IPC pipe event occurred %" PRId16, events);
+    char dummy[1];
+    ssize_t n = read(fd, dummy, sizeof(dummy));
+    if (n == 0)
+    {
+        // Parent closed its end (EOF)
+        ERROR("Parent process died. Exiting child.");
+        exit(1);
+    }
+    else if (n < 0)
+    {
+        perror("read");
+        exit(1);
     }
 }
 
@@ -89,7 +113,7 @@ static void ipc_reply_cb(struct bufferevent *bev, void *ctx)
     reply_ctx->buffer[n] = '\0';
 
     reply_ctx->reply_received = 1;
-    INFO("IPC callback received reply: %s", reply_ctx->buffer);
+    DEBG("IPC callback received reply: %s", reply_ctx->buffer);
 
     event_base_loopexit(bufferevent_get_base(bev), NULL);
 }
@@ -110,20 +134,16 @@ static void ask_custom_command(connection_t *connection,
         connection->interprocess_bev, ipc_reply_cb, NULL, event_cb, &reply_ctx);
 
     bufferevent_write(connection->interprocess_bev, buffer, strlen(buffer));
-    INFO("Sent custom command, now waiting for reply...");
+    DEBG("Sent custom command, now waiting for reply...");
 
     /*TODO: Add a timeout here */
 
     event_base_dispatch(bufferevent_get_base(connection->interprocess_bev));
 
     if (reply_ctx.reply_received)
-    {
-        INFO("ask_custom_command finished with reply: %s", reply_ctx.buffer);
-    }
+        DEBG("ask_custom_command finished with reply: %s", reply_ctx.buffer);
     else
-    {
         ERROR("ask_custom_command failed: no reply received.");
-    }
 
     bufferevent_setcb(
         connection->interprocess_bev, NULL, NULL, event_cb, connection);

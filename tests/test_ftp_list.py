@@ -134,7 +134,7 @@ def test_list_hidden_files(ftp_test_user, ftp_home_dir, mode):
         ftp.prot_p()
     ftp.login(username, password)
     lines = []
-    ftp.retrlines("LIST", lines.append)
+    ftp.retrlines("LIST -a", lines.append)
     assert any(".hiddenfile" in line for line in lines)
 
 

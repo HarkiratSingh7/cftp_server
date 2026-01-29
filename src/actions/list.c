@@ -5,6 +5,7 @@
 #include <event2/event.h>
 #include <fcntl.h>
 #include <openssl/err.h>
+#include <stdbool.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -13,26 +14,56 @@
 #include "error.h"
 #include "ftp_status_codes.h"
 #include "interprocess_handler.h"
+#include "security.h"
 
-void handle_LIST_command(connection_t *connection,
-                         const char *params,
-                         int description,
-                         int hidden);
+typedef struct
+{
+    bool all;
+    bool human;
+    bool recursive;
+    const char *path;
+} list_flags_t;
+
+void handle_list_command(cftp_command_t *command,
+                         connection_t *connection,
+                         int description);
+static bool parse_list_flags(cftp_command_t *cmd, list_flags_t *flags);
 static void send_list_command_output(connection_t *connection,
                                      const char *params,
                                      int description,
-                                     int hidden);
+                                     int hidden,
+                                     bool human);
 static void format_unix_list_entry(connection_t *connection,
                                    char *buf,
                                    size_t bufsize,
                                    const char *name,
-                                   const struct stat *st);
-
+                                   const struct stat *st,
+                                   bool human);
+static const char *human_readable_size(off_t size, char *buf, size_t buflen);
 static void tls_on_bev_event_connected(struct bufferevent *bev, void *ctx);
 static void close_on_listcb(struct bufferevent *bev, void *ctx);
 
+static bool parse_list_flags(cftp_command_t *cmd, list_flags_t *flags)
+{
+    memset(flags, 0, sizeof(list_flags_t));
+
+    for (int i = 0; i < cmd->argc; i++)
+    {
+        IF_MATCHES(cmd->args[i], "-a")
+        flags->all = true;
+        ELSE IF_MATCHES(cmd->args[i], "-h") flags->human = true;
+        ELSE IF_MATCHES(cmd->args[i], "-R") flags->recursive = true;
+        ELSE IF(!flags->path) flags->path = cmd->args[i];
+        ELSE return false;
+    }
+
+    return 1;
+}
+
 static void close_on_listcb(struct bufferevent *bev, void *ctx)
 {
+    if (!bev) return;
+
     DEBG("Sent Directory OK");
     connection_t *connection = (connection_t *)ctx;
     connection->control_write_cb = close_data_connection_on_writecb;
@@ -40,11 +71,20 @@ static void close_on_listcb(struct bufferevent *bev, void *ctx)
         connection, FTP_STATUS_DATA_CONNECTION_CLOSING, "Directory send OK");
 }
 
-void handle_LIST_command(connection_t *connection,
-                         const char *params,
-                         int description,
-                         int hidden)
+void handle_list_command(cftp_command_t *command,
+                         connection_t *connection,
+                         int description)
 {
+    list_flags_t args;
+    if (!parse_list_flags(command, &args))
+    {
+        connection->control_write_cb = close_data_connection_on_writecb;
+        send_control_message(connection,
+                             FTP_STATUS_SYNTAX_ERROR_PARAMS,
+                             "Failed to parse parameters");
+        return;
+    }
+
     if (!connection->data_bev)
     {
         ERROR("Failed to open data connection !");
@@ -55,18 +95,16 @@ void handle_LIST_command(connection_t *connection,
     }
 
     char path[PATH_MAX] = ".";
-    if (params && strlen(params) > 0)
+
+    if (args.path && strlen(args.path) > 0)
+        snprintf(path, sizeof(path), "%s", args.path);
+
+    if (!is_path_safe(path))
     {
-        /*  Prevent traversal outside the chroot */
-        if (strstr(params, "..") != NULL)
-        {
-            connection->control_write_cb = close_data_connection_on_writecb;
-            send_control_message(connection,
-                                 FTP_STATUS_FILE_ACTION_NOT_TAKEN_PERM,
-                                 "Invalid path");
-            return;
-        }
-        snprintf(path, sizeof(path), "%s", params);
+        connection->control_write_cb = close_data_connection_on_writecb;
+        send_control_message(
+            connection, FTP_STATUS_FILE_ACTION_NOT_TAKEN_PERM, "Invalid path");
+        return;
     }
 
     DIR *dir = opendir(path);
@@ -75,15 +113,19 @@ void handle_LIST_command(connection_t *connection,
         connection->control_write_cb = close_data_connection_on_writecb;
         send_control_message(
             connection, FTP_STATUS_FILE_ACTION_NOT_TAKEN_PERM, "Invalid path");
+        ERROR("Directory %s does not exists or %s cannot access",
+              path,
+              connection->username);
         return;
     }
 
     if (connection->data_tls_required)
     {
-        connection->params = params;
+        strncpy(connection->path, path, PATH_MAX);
         connection->description = description;
-        connection->hidden = hidden;
+        connection->hidden = args.all;
         connection->data_tls_event_connected_cb = tls_on_bev_event_connected;
+        connection->human = args.human;
     }
 
     send_control_message(connection,
@@ -91,43 +133,35 @@ void handle_LIST_command(connection_t *connection,
                          "Here comes the directory listings");
 
     if (!connection->data_tls_required)
-        send_list_command_output(connection, params, description, hidden);
+        send_list_command_output(
+            connection, path, description, args.all, args.human);
 }
 
 static void tls_on_bev_event_connected(struct bufferevent *bev, void *ctx)
 {
     connection_t *connection = (connection_t *)ctx;
-    if (!connection)
+    if (!connection || !bev)
     {
         ERROR("Invalid connection object");
         return;
     }
 
     send_list_command_output(connection,
-                             connection->params,
+                             connection->path,
                              connection->description,
-                             connection->hidden);
+                             connection->hidden,
+                             connection->human);
 }
 
 static void send_list_command_output(connection_t *connection,
                                      const char *params,
                                      int description,
-                                     int hidden)
+                                     int hidden,
+                                     bool human)
 {
-    char path[PATH_MAX] = ".";
-    if (params && strlen(params) > 0)
-    {
-        /*  Prevent traversal outside the chroot */
-        if (strstr(params, "..") != NULL)
-        {
-            connection->control_write_cb = close_data_connection_on_writecb;
-            send_control_message(connection,
-                                 FTP_STATUS_FILE_ACTION_NOT_TAKEN_PERM,
-                                 "Invalid path");
-            return;
-        }
-        snprintf(path, sizeof(path), "%s", params);
-    }
+    char path[PATH_MAX] = {0};
+    strncpy(path, params, PATH_MAX);
+
     DIR *dir = opendir(path);
     struct dirent *entry;
     struct evbuffer *evbuf = evbuffer_new();
@@ -145,10 +179,10 @@ static void send_list_command_output(connection_t *connection,
 
         if (hidden == 0 && entry->d_name[0] == '.') continue;
 
-        char line[4096];
+        char line[PATH_MAX];
         if (description)
             format_unix_list_entry(
-                connection, line, sizeof(line), entry->d_name, &st);
+                connection, line, sizeof(line), entry->d_name, &st, human);
         else
             snprintf(line, sizeof(line), "%s\r\n", entry->d_name);
         DEBG("Got line %s", line);
@@ -179,7 +213,8 @@ static void format_unix_list_entry(connection_t *connection,
                                    char *buf,
                                    size_t bufsize,
                                    const char *name,
-                                   const struct stat *st)
+                                   const struct stat *st,
+                                   bool human)
 {
     char perms[11] = "----------";
 
@@ -203,13 +238,36 @@ static void format_unix_list_entry(connection_t *connection,
     ask_root_for_groupname(
         connection, st->st_gid, groupname, sizeof(groupname));
 
+    char sizebuf[32];
+    if (human)
+        human_readable_size(st->st_size, sizebuf, sizeof(sizebuf));
+    else
+        snprintf(sizebuf, sizeof(sizebuf), "%8" PRId64, (long)st->st_size);
+
     snprintf(buf,
              bufsize,
-             "%s 1 %s %s %8ld %s %s\r\n",
+             "%s %2" PRId64 " %-8s %-8s %10s %s %s\r\n",
              perms,
+             (unsigned long)st->st_nlink,
              username,
              groupname,
-             (long)st->st_size,
+             sizebuf,
              timebuf,
              name);
+}
+
+static const char *human_readable_size(off_t size, char *buf, size_t buflen)
+{
+    const char *units[] = {"B", "K", "M", "G", "T", "P"};
+    int unit = 0;
+    double s = (double)size;
+
+    while (s >= 1024.0 && unit < 5)
+    {
+        s /= 1024.0;
+        unit++;
+    }
+
+    snprintf(buf, buflen, "%.1f%s", s, units[unit]);
+    return buf;
 }

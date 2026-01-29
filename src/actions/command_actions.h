@@ -3,8 +3,6 @@
 
 #include "command_parser.h"
 
-#define MAX_COMMAND_LENGTH 0x400
-
 typedef struct
 {
     const char *action;
@@ -13,7 +11,7 @@ typedef struct
 } command_action;
 
 #define ACTION_FUNC(action) \
-    void action(const char *input, const char *params, connection_t *connection)
+    void action(cftp_command_t *command, connection_t *connection)
 
 #define DECL_ACTION_FOR_COMMAND(action, function)  \
     static const char *action##_COMMAND = #action; \
@@ -62,6 +60,9 @@ DECL_ACTION_FOR_COMMAND(MDTM, cftp_mdtm_authenticated_action)
 DECL_ACTION_FOR_COMMAND(CWD, cftp_cwd_authenticated_action)
 DECL_ACTION_FOR_COMMAND(PWD, cftp_pwd_authenticated_action)
 DECL_ACTION_FOR_COMMAND(ABOR, cftp_abor_authenticated_action)
+DECL_ACTION_FOR_COMMAND(RMD, cftp_rmd_authenticated_action)
+DECL_ACTION_FOR_COMMAND(MKD, cftp_mkd_authenticated_action)
+DECL_ACTION_FOR_COMMAND(DELE, cftp_dele_authenticated_action)
 DECL_ACTION_FOR_COMMAND(NON_AUTH, cftp_non_authenticated)
 
 /* Non Authenticated only */
@@ -116,6 +117,15 @@ static const command_action command_actions[] = {
                                  cftp_non_authenticated),
     ADD_COMMAND_WITH_DIFF_ACTION(ABOR,
                                  cftp_abor_authenticated_action,
+                                 cftp_non_authenticated),
+    ADD_COMMAND_WITH_DIFF_ACTION(MKD,
+                                 cftp_mkd_authenticated_action,
+                                 cftp_non_authenticated),
+    ADD_COMMAND_WITH_DIFF_ACTION(RMD,
+                                 cftp_rmd_authenticated_action,
+                                 cftp_non_authenticated),
+    ADD_COMMAND_WITH_DIFF_ACTION(DELE,
+                                 cftp_dele_authenticated_action,
                                  cftp_non_authenticated),
 
     /* Non authenticated only */

@@ -57,6 +57,5 @@ dkms.conf
 .vscode/
 [Cc]erts/
 .pytest*
-.devcontainer/
 */__pycache__/
 .pre-commit-debug/
